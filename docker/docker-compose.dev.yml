@@ -93,6 +93,8 @@ services:
     hostname: broker
     networks:
       - 'stack'
+    ports:
+      - '9092:9092'
     command:
       - redpanda
       - start
