@@ -1,5 +1,6 @@
 {
   "get-started": "Get Started",
-  "oidc-login": "OIDC Login",
-  "client-and-cli-configuration": "Client & CLI Configuration"
+  "oidc-login": "SSO with OIDC",
+  "client-and-cli-configuration": "Client & CLI Configuration",
+  "federation-2": "Apollo Federation 2"
 }

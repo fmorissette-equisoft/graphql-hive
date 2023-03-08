@@ -2,28 +2,28 @@
   "name": "@hive/usage-estimator",
   "version": "0.0.0",
   "type": "module",
-  "description": "A microservice for Hive SaaS, that calculates and exposes usage information.",
+  "description": "A microservice for Hive Cloud, that calculates and exposes usage information.",
   "license": "MIT",
   "private": true,
   "scripts": {
     "build": "bob runify --single",
-    "dev": "tsup-node src/dev.ts --format esm --shims --target node18 --watch --sourcemap --onSuccess 'node --enable-source-maps dist/dev.js' | pino-pretty --translateTime HH:MM:ss TT --ignore pid,hostname",
+    "dev": "tsup-node --config ../../../configs/tsup/dev.config.node.ts src/dev.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sentry/node": "7.37.2",
-    "@sentry/tracing": "7.37.2",
-    "@trpc/server": "10.11.1",
-    "@whatwg-node/fetch": "0.8.1",
+    "@sentry/node": "7.41.0",
+    "@sentry/tracing": "7.41.0",
+    "@trpc/server": "10.14.1",
+    "@whatwg-node/fetch": "0.8.2",
     "dotenv": "16.0.3",
-    "got": "12.5.3",
+    "got": "12.6.0",
     "reflect-metadata": "0.1.13",
-    "zod": "3.20.6"
+    "zod": "3.21.4"
   },
   "devDependencies": {
     "@hive/api": "workspace:*",
     "@hive/service-common": "workspace:*",
-    "pino-pretty": "9.2.0",
+    "pino-pretty": "9.4.0",
     "tslib": "2.5.0"
   },
   "buildOptions": {

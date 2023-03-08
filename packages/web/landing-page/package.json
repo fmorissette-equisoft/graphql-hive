@@ -8,21 +8,21 @@
     "dev": "next"
   },
   "dependencies": {
-    "@next/env": "13.1.1",
-    "@radix-ui/react-tooltip": "1.0.3",
-    "@theguild/components": "4.5.4",
+    "@next/env": "13.2.1",
+    "@radix-ui/react-tooltip": "1.0.4",
+    "@theguild/components": "4.5.6",
     "clsx": "1.2.1",
-    "next": "13.1.1",
+    "next": "13.2.1",
     "next-themes": "*",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "react-icons": "4.7.1"
+    "react-icons": "4.8.0"
   },
   "devDependencies": {
     "@theguild/tailwind-config": "0.2.1",
     "@types/react": "18.0.28",
-    "next-sitemap": "3.1.52",
+    "next-sitemap": "3.1.55",
     "postcss": "8.4.21",
-    "tailwindcss": "3.2.6"
+    "tailwindcss": "3.2.7"
   }
 }

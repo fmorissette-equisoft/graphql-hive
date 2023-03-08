@@ -98,7 +98,11 @@ export class GraphQLDocumentStringInvalidError extends Error {
   }
 }
 
-export function createSchemaObject(schema: SingleSchema | PushedCompositeSchema): SchemaObject {
+export function createSchemaObject(
+  schema:
+    | Pick<SingleSchema, 'sdl'>
+    | Pick<PushedCompositeSchema, 'sdl' | 'service_name' | 'service_url'>,
+): SchemaObject {
   let document: DocumentNode;
 
   try {
@@ -124,11 +128,6 @@ export enum ProjectType {
   SINGLE = 'SINGLE',
 }
 
-export enum OrganizationType {
-  PERSONAL = 'PERSONAL',
-  REGULAR = 'REGULAR',
-}
-
 export interface OrganizationGetStarted {
   id: string;
   creatingProject: boolean;
@@ -143,7 +142,6 @@ export interface Organization {
   id: string;
   cleanId: string;
   name: string;
-  type: OrganizationType;
   billingPlan: string;
   monthlyRateLimit: {
     retentionInDays: number;
@@ -253,16 +251,17 @@ export interface TargetSettings {
   };
 }
 
+export interface ComposeAndValidateResult {
+  supergraph: string | null;
+  errors: CompositionFailureError[];
+  sdl: string | null;
+}
+
 export interface Orchestrator {
-  validate(
+  composeAndValidate(
     schemas: SchemaObject[],
     config: Project['externalComposition'],
-  ): Promise<CompositionFailureError[]>;
-  build(schemas: SchemaObject[], config: Project['externalComposition']): Promise<SchemaObject>;
-  supergraph(
-    schemas: SchemaObject[],
-    config: Project['externalComposition'],
-  ): Promise<string | null>;
+  ): Promise<ComposeAndValidateResult>;
 }
 
 export interface ActivityObject {

@@ -1,18 +1,19 @@
 import { Fragment, ReactElement, useCallback, useState } from 'react';
 import clsx from 'clsx';
 import { useFormik } from 'formik';
-import { gql, useMutation, useQuery } from 'urql';
+import { useMutation, useQuery } from 'urql';
 import * as Yup from 'yup';
 import { Button, Heading, Input, Modal } from '@/components/v2';
 import { ArrowDownIcon, CheckIcon } from '@/components/v2/icon';
-import { MemberFieldsFragment, OrganizationFieldsFragment } from '@/graphql';
+import { FragmentType, graphql, useFragment } from '@/gql';
+import { MemberFieldsFragment } from '@/graphql';
 import { useNotifications } from '@/lib/hooks';
 import { Combobox as HeadlessCombobox, Transition as HeadlessTransition } from '@headlessui/react';
 
 const Combobox = HeadlessCombobox as any;
 const Transition = HeadlessTransition as any;
 
-const TransferOrganizationOwnership_Request = gql(/* GraphQL */ `
+const TransferOrganizationOwnership_Request = graphql(`
   mutation TransferOrganizationOwnership_Request($input: RequestOrganizationTransferInput!) {
     requestOrganizationTransfer(input: $input) {
       ok {
@@ -25,17 +26,23 @@ const TransferOrganizationOwnership_Request = gql(/* GraphQL */ `
   }
 `);
 
-const TransferOrganizationOwnership_Members = gql(/* GraphQL */ `
+const TransferOrganizationOwnership_Members = graphql(`
   query TransferOrganizationOwnership_Members($selector: OrganizationSelectorInput!) {
     organization(selector: $selector) {
       organization {
         id
         cleanId
         name
-        type
         members {
           nodes {
+            isOwner
             ...MemberFields
+            user {
+              id
+              fullName
+              displayName
+              email
+            }
           }
           total
         }
@@ -46,15 +53,25 @@ const TransferOrganizationOwnership_Members = gql(/* GraphQL */ `
 
 type Member = MemberFieldsFragment;
 
+const TransferOrganizationOwnershipModal_OrganizationFragment = graphql(`
+  fragment TransferOrganizationOwnershipModal_OrganizationFragment on Organization {
+    cleanId
+  }
+`);
+
 export const TransferOrganizationOwnershipModal = ({
   isOpen,
   toggleModalOpen,
-  organization,
+  ...props
 }: {
   isOpen: boolean;
   toggleModalOpen: () => void;
-  organization: OrganizationFieldsFragment;
+  organization: FragmentType<typeof TransferOrganizationOwnershipModal_OrganizationFragment>;
 }): ReactElement => {
+  const organization = useFragment(
+    TransferOrganizationOwnershipModal_OrganizationFragment,
+    props.organization,
+  );
   const notify = useNotifications();
   const [, mutate] = useMutation(TransferOrganizationOwnership_Request);
   const [query] = useQuery({
@@ -162,7 +179,7 @@ export const TransferOrganizationOwnershipModal = ({
           <div className="relative">
             <div
               className={clsx(
-                `rounded-sm bg-gray-800 p-4 text-sm font-medium text-white ring-1 ring-gray-700 focus-within:ring`,
+                'rounded-sm bg-gray-800 p-4 text-sm font-medium text-white ring-1 ring-gray-700 focus-within:ring',
                 touched.newOwner && !!errors.newOwner
                   ? 'text-red-500 caret-white ring-red-500'
                   : null,
@@ -197,7 +214,7 @@ export const TransferOrganizationOwnershipModal = ({
                       key={member.id}
                       className={({ active, selected }: { active?: boolean; selected?: boolean }) =>
                         clsx(
-                          `relative cursor-pointer select-none p-2 font-medium text-gray-300`,
+                          'relative cursor-pointer select-none p-2 font-medium text-gray-300',
                           active || selected ? 'bg-gray-900' : null,
                         )
                       }

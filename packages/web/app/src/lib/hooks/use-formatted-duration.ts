@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { toDecimal } from './use-decimal';
 
-export function formatDuration(duration: number, showZero = false) {
+function formatDuration(duration: number, showZero = false) {
   if (duration === 0 && !showZero) {
-    return `-`;
+    return '-';
   }
 
   if (duration < 1000) {
@@ -14,8 +14,5 @@ export function formatDuration(duration: number, showZero = false) {
 }
 
 export function useFormattedDuration(duration?: number): string {
-  return useMemo(
-    () => (typeof duration === 'undefined' ? '-' : formatDuration(duration)),
-    [duration],
-  );
+  return useMemo(() => (duration === undefined ? '-' : formatDuration(duration)), [duration]);
 }

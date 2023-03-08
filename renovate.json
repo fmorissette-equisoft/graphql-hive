@@ -48,5 +48,20 @@
       "matchPackagePrefixes": ["@slonik", "slonik"],
       "recreateClosed": false
     }
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": ["deployment/.*?\\.ts$"],
+      "matchStrings": ["image: (?:'|\")(?<depName>.*?):(?<currentValue>.*?)(?:'|\")"],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "fileMatch": ["deployment/.*?\\.ts$"],
+      "matchStrings": [
+        "helmChart\\((?:'|\")(?<registryUrl>.*?)(?:'|\"), (?:'|\")(?<depName>.*?)(?:'|\"), (?:'|\")(?<currentValue>.*?)(?:'|\")\\)"
+      ],
+      "datasourceTemplate": "helm"
+    }
   ]
 }

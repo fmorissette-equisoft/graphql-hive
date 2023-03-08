@@ -1,18 +1,8 @@
 /* eslint-disable import/no-extraneous-dependencies */
 import produce from 'immer';
 import { getOperationName, TypedDocumentNode } from 'urql';
-import {
-  ExternalComposition_DisableMutation,
-  ExternalComposition_ProjectConfigurationQuery,
-  ExternalCompositionForm_EnableMutation,
-} from '@/components/project/settings/external-composition';
 import { ResultOf, VariablesOf } from '@graphql-typed-document-node/core';
 import { Cache, QueryInput, UpdateResolver } from '@urql/exchange-graphcache';
-import {
-  InvitationDeleteButton_DeleteInvitation,
-  MemberInvitationForm_InviteByEmail,
-  Members_OrganizationMembers,
-} from '../../pages/[orgId]/view/members';
 import {
   AddAlertChannelDocument,
   AddAlertDocument,
@@ -95,7 +85,7 @@ const deleteOrganization: TypedDocumentNodeUpdateResolver<typeof DeleteOrganizat
   _args,
   cache,
 ) => {
-  const organization = deleteOrganization.organization;
+  const { organization } = deleteOrganization;
 
   cache.invalidate({
     __typename: organization.__typename,
@@ -111,7 +101,7 @@ const createProject: TypedDocumentNodeUpdateResolver<typeof CreateProjectDocumen
   if (!createProject.ok) {
     return;
   }
-  const selector = createProject.ok.selector;
+  const { selector } = createProject.ok;
   const project = createProject.ok.createdProject;
 
   updateQuery(
@@ -154,7 +144,7 @@ const createTarget: TypedDocumentNodeUpdateResolver<typeof CreateTargetDocument>
   }
 
   const target = createTarget.ok.createdTarget;
-  const selector = createTarget.ok.selector;
+  const { selector } = createTarget.ok;
 
   updateQuery(
     cache,
@@ -221,7 +211,7 @@ const deleteTokens: TypedDocumentNodeUpdateResolver<typeof DeleteTokensDocument>
   _args,
   cache,
 ) => {
-  const selector = deleteTokens.selector;
+  const { selector } = deleteTokens;
 
   updateQuery(
     cache,
@@ -361,137 +351,6 @@ const deleteGitHubIntegration: TypedDocumentNodeUpdateResolver<
   );
 };
 
-const inviteToOrganizationByEmail: TypedDocumentNodeUpdateResolver<
-  typeof MemberInvitationForm_InviteByEmail
-> = ({ inviteToOrganizationByEmail }, args, cache) => {
-  if (inviteToOrganizationByEmail.ok) {
-    cache.updateQuery(
-      {
-        query: Members_OrganizationMembers,
-        variables: {
-          selector: {
-            organization: args.input.organization,
-          },
-        },
-      },
-      data => {
-        if (data === null) {
-          return null;
-        }
-
-        const invitation = inviteToOrganizationByEmail.ok;
-
-        if (invitation) {
-          data.organization?.organization?.invitations.nodes.push({
-            ...invitation,
-            __typename: 'OrganizationInvitation',
-          });
-        }
-
-        return data;
-      },
-    );
-  }
-};
-
-const deleteOrganizationInvitation: TypedDocumentNodeUpdateResolver<
-  typeof InvitationDeleteButton_DeleteInvitation
-> = ({ deleteOrganizationInvitation }, args, cache) => {
-  if (deleteOrganizationInvitation.ok) {
-    cache.updateQuery(
-      {
-        query: Members_OrganizationMembers,
-        variables: {
-          selector: {
-            organization: args.input.organization,
-          },
-        },
-      },
-      data => {
-        if (data === null) {
-          return null;
-        }
-
-        const invitation = deleteOrganizationInvitation.ok;
-
-        if (invitation && data.organization?.organization?.invitations.nodes) {
-          data.organization.organization.invitations.nodes =
-            data.organization.organization.invitations.nodes.filter(
-              node => node.id !== invitation.id,
-            );
-        }
-
-        return data;
-      },
-    );
-  }
-};
-
-const enableExternalSchemaComposition: TypedDocumentNodeUpdateResolver<
-  typeof ExternalCompositionForm_EnableMutation
-> = ({ enableExternalSchemaComposition }, args, cache) => {
-  if (enableExternalSchemaComposition.ok) {
-    cache.updateQuery(
-      {
-        query: ExternalComposition_ProjectConfigurationQuery,
-        variables: {
-          selector: {
-            organization: args.input.organization,
-            project: args.input.project,
-          },
-        },
-      },
-      data => {
-        if (data === null) {
-          return null;
-        }
-
-        const ok = enableExternalSchemaComposition.ok;
-
-        if (ok && data.project?.externalSchemaComposition) {
-          data.project.externalSchemaComposition = {
-            __typename: 'ExternalSchemaComposition',
-            endpoint: ok.endpoint,
-          };
-        }
-
-        return data;
-      },
-    );
-  }
-};
-
-const disableExternalSchemaComposition: TypedDocumentNodeUpdateResolver<
-  typeof ExternalComposition_DisableMutation
-> = ({ disableExternalSchemaComposition }, args, cache) => {
-  if (disableExternalSchemaComposition.ok) {
-    cache.updateQuery(
-      {
-        query: ExternalComposition_ProjectConfigurationQuery,
-        variables: {
-          selector: {
-            organization: args.input.organization,
-            project: args.input.project,
-          },
-        },
-      },
-      data => {
-        if (data === null) {
-          return null;
-        }
-
-        const ok = disableExternalSchemaComposition.ok;
-
-        if (ok && data.project?.externalSchemaComposition) {
-          data.project.externalSchemaComposition = null;
-        }
-
-        return data;
-      },
-    );
-  }
-};
-
 // UpdateResolver
 export const Mutation = {
   createOrganization,
@@ -509,8 +368,4 @@ export const Mutation = {
   deleteAlertChannels,
   addAlert,
   deletePersistedOperation,
-  inviteToOrganizationByEmail,
-  deleteOrganizationInvitation,
-  enableExternalSchemaComposition,
-  disableExternalSchemaComposition,
 };

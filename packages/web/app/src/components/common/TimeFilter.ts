@@ -1,8 +1,4 @@
-import { startOfMonth } from 'date-fns';
-import formatISO from 'date-fns/formatISO';
-import subDays from 'date-fns/subDays';
-import subHours from 'date-fns/subHours';
-import subMinutes from 'date-fns/subMinutes';
+import { formatISO, startOfMonth, subDays, subHours, subMinutes } from 'date-fns';
 
 export function floorToMinute(date: Date) {
   const time = 1000 * 60 * 1;
@@ -52,7 +48,7 @@ type KeyOf<T> = T extends Array<{
   ? K
   : never;
 
-export type PeriodKey = KeyOf<typeof DATE_RANGE_OPTIONS>;
+type PeriodKey = KeyOf<typeof DATE_RANGE_OPTIONS>;
 
 export function calculatePeriod(period: PeriodKey) {
   const now = floorToMinute(new Date());

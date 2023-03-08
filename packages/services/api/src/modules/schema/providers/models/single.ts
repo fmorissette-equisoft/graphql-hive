@@ -176,7 +176,7 @@ export class SingleModel {
       };
     }
 
-    const [compositionCheck, metadataCheck] = await Promise.all([
+    const [compositionCheck, metadataCheck, diffCheck] = await Promise.all([
       this.checks.composition({
         orchestrator: this.orchestrator,
         project,
@@ -191,6 +191,17 @@ export class SingleModel {
         ],
       }),
       this.checks.metadata(incoming, latestVersion ? latestVersion.schemas[0] : null),
+      this.checks.diff({
+        orchestrator: this.orchestrator,
+        project,
+        schemas,
+        selector: {
+          target: target.id,
+          project: project.id,
+          organization: project.orgId,
+        },
+        latestVersion,
+      }),
     ]);
 
     if (metadataCheck.status === 'failed') {
@@ -233,13 +244,14 @@ export class SingleModel {
       state: {
         composable: compositionCheck.status === 'completed',
         initial: latestVersion === null,
-        changes: null,
+        changes: diffCheck.result?.changes ?? diffCheck.reason?.changes ?? null,
         messages,
         breakingChanges: null,
         compositionErrors: null,
         schema: incoming,
         schemas,
-        orchestrator: this.orchestrator,
+        supergraph: null,
+        fullSchemaSdl: compositionCheck.result?.fullSchemaSdl ?? null,
       },
     };
   }
