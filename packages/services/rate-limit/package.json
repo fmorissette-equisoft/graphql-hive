@@ -11,11 +11,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sentry/node": "7.41.0",
-    "@sentry/tracing": "7.41.0",
-    "@trpc/client": "10.14.1",
-    "@trpc/server": "10.14.1",
-    "@whatwg-node/fetch": "0.8.2",
+    "@sentry/node": "7.44.2",
+    "@sentry/tracing": "7.44.2",
+    "@trpc/client": "10.18.0",
+    "@trpc/server": "10.18.0",
+    "@whatwg-node/fetch": "0.8.4",
     "date-fns": "2.29.3",
     "dotenv": "16.0.3",
     "got": "12.6.0",
@@ -26,7 +26,7 @@
     "@hive/emails": "workspace:*",
     "@hive/service-common": "workspace:*",
     "@hive/storage": "workspace:*",
-    "pino-pretty": "9.4.0",
+    "pino-pretty": "10.0.0",
     "tslib": "2.5.0"
   },
   "buildOptions": {

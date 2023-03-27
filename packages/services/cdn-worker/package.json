@@ -14,16 +14,16 @@
   "dependencies": {
     "bcryptjs": "2.4.3",
     "graphql": "16.6.0",
-    "toucan-js": "2.7.0",
+    "toucan-js": "3.1.0",
     "zod": "3.21.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20230307.0",
+    "@cloudflare/workers-types": "4.20230321.0",
     "@types/service-worker-mock": "2.0.1",
-    "@whatwg-node/fetch": "0.8.2",
-    "@whatwg-node/server": "0.7.4",
+    "@whatwg-node/fetch": "0.8.4",
+    "@whatwg-node/server": "0.7.5",
     "dotenv": "16.0.3",
-    "esbuild": "0.17.11",
+    "esbuild": "0.17.14",
     "fastify": "3.29.5",
     "itty-router": "2.6.6",
     "itty-router-extras": "0.4.2"

@@ -11,10 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sentry/node": "7.41.0",
-    "@sentry/tracing": "7.41.0",
-    "@trpc/server": "10.14.1",
-    "@whatwg-node/fetch": "0.8.2",
+    "@sentry/node": "7.44.2",
+    "@sentry/tracing": "7.44.2",
+    "@trpc/server": "10.18.0",
+    "@whatwg-node/fetch": "0.8.4",
     "dotenv": "16.0.3",
     "got": "12.6.0",
     "reflect-metadata": "0.1.13",
@@ -23,7 +23,7 @@
   "devDependencies": {
     "@hive/api": "workspace:*",
     "@hive/service-common": "workspace:*",
-    "pino-pretty": "9.4.0",
+    "pino-pretty": "10.0.0",
     "tslib": "2.5.0"
   },
   "buildOptions": {

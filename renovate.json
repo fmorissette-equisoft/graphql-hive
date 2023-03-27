@@ -15,7 +15,7 @@
     },
     {
       "groupName": "radix",
-      "matchPackagePrefixes": ["@radix/"],
+      "matchPackagePrefixes": ["@radix/", "@radix-ui"],
       "recreateClosed": false
     },
     {
@@ -49,6 +49,10 @@
       "recreateClosed": false
     }
   ],
+  "dockerfile": {
+    "enabled": true,
+    "fileMatch": [".*?\\.[dD]ockerfile"]
+  },
   "regexManagers": [
     {
       "fileMatch": ["deployment/.*?\\.ts$"],
