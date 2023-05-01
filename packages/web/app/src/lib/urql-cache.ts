@@ -1,5 +1,5 @@
 /* eslint-disable import/no-extraneous-dependencies */
-import produce from 'immer';
+import { produce } from 'immer';
 import { getOperationName, TypedDocumentNode } from 'urql';
 import { ResultOf, VariablesOf } from '@graphql-typed-document-node/core';
 import { Cache, QueryInput, UpdateResolver } from '@urql/exchange-graphcache';
@@ -51,12 +51,12 @@ const deleteAlerts: TypedDocumentNodeUpdateResolver<typeof DeleteAlertsDocument>
   _args,
   cache,
 ) => {
-  deleteAlerts.forEach(alert => {
+  for (const alert of deleteAlerts) {
     cache.invalidate({
       __typename: alert.__typename,
       id: alert.id,
     });
-  });
+  }
 };
 
 const createOrganization: TypedDocumentNodeUpdateResolver<typeof CreateOrganizationDocument> = (
@@ -266,12 +266,12 @@ const deleteAlertChannels: TypedDocumentNodeUpdateResolver<typeof DeleteAlertCha
   _args,
   cache,
 ) => {
-  deleteAlertChannels.forEach(channel => {
+  for (const channel of deleteAlertChannels) {
     cache.invalidate({
       __typename: channel.__typename,
       id: channel.id,
     });
-  });
+  }
 };
 const addAlert: TypedDocumentNodeUpdateResolver<typeof AddAlertDocument> = (
   { addAlert },

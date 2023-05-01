@@ -28,7 +28,6 @@ export default gql`
   }
 
   extend type Query {
-    schemaCompare(selector: SchemaCompareInput!): SchemaComparePayload!
     schemaCompareToPrevious(selector: SchemaCompareToPreviousInput!): SchemaComparePayload!
     schemaVersions(selector: SchemaVersionsInput!, after: ID, limit: Int!): SchemaVersionConnection!
     schemaVersion(selector: SchemaVersionInput!): SchemaVersion!
@@ -251,6 +250,7 @@ export default gql`
 
   type SchemaChange {
     criticality: CriticalityLevel!
+    criticalityReason: String
     message: String!
     path: [String!]
   }
@@ -365,8 +365,19 @@ export default gql`
     initial: Boolean!
   }
 
-  type SchemaCompareError {
+  enum SchemaCompareErrorDetailType {
+    graphql
+    composition
+  }
+
+  type SchemaCompareErrorDetail {
     message: String!
+    type: SchemaCompareErrorDetailType!
+  }
+
+  type SchemaCompareError {
+    message: String! @deprecated(reason: "Use details instead.")
+    details: [SchemaCompareErrorDetail!]
   }
 
   union SchemaComparePayload = SchemaCompareResult | SchemaCompareError

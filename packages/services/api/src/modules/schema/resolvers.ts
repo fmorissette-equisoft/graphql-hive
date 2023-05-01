@@ -21,6 +21,8 @@ import type {
   GraphQLObjectTypeMapper,
   GraphQLScalarTypeMapper,
   GraphQLUnionTypeMapper,
+  SchemaCompareError,
+  SchemaCompareResult,
 } from '../../shared/mappers';
 import type { WithGraphQLParentInfo, WithSchemaCoordinatesUsage } from '../../shared/mappers';
 import { buildSchema, createConnection } from '../../shared/schema';
@@ -31,11 +33,13 @@ import { ProjectManager } from '../project/providers/project-manager';
 import { IdTranslator } from '../shared/providers/id-translator';
 import { TargetManager } from '../target/providers/target-manager';
 import type { SchemaModule } from './__generated__/types';
-import { Inspector } from './providers/inspector';
+import { Inspector, toGraphQLSchemaChange } from './providers/inspector';
 import { SchemaBuildError } from './providers/orchestrators/errors';
+import { detectUrlChanges } from './providers/registry-checks';
 import { ensureSDL, SchemaHelper } from './providers/schema-helper';
 import { SchemaManager } from './providers/schema-manager';
 import { SchemaPublisher } from './providers/schema-publisher';
+import { schemaChangeFromMeta, SerializableChange } from './schema-change-from-meta';
 
 const MaybeModel = <T extends z.ZodType>(value: T) => z.union([z.null(), z.undefined(), value]);
 const GraphQLSchemaStringModel = z.string().max(5_000_000).min(0);
@@ -83,13 +87,22 @@ export const resolvers: SchemaModule.Resolvers = {
         injector.get(TargetManager).getTargetIdByToken(),
       ]);
 
-      return injector.get(SchemaPublisher).check({
+      const result = await injector.get(SchemaPublisher).check({
         ...input,
         service: input.service?.toLowerCase(),
         organization,
         project,
         target,
       });
+
+      if ('changes' in result) {
+        return {
+          ...result,
+          changes: result.changes.map(toGraphQLSchemaChange),
+        };
+      }
+
+      return result;
     },
     async schemaPublish(_, { input }, { injector, abortSignal }, info) {
       const [organization, project, target] = await Promise.all([
@@ -103,6 +116,9 @@ export const resolvers: SchemaModule.Resolvers = {
         .update(
           JSON.stringify({
             ...input,
+            organization,
+            project,
+            target,
             service: input.service?.toLowerCase(),
           }),
         )
@@ -115,7 +131,7 @@ export const resolvers: SchemaModule.Resolvers = {
       const isSchemaPublishMissingUrlErrorSelected =
         !!parsedResolveInfoFragment?.fieldsByTypeName['SchemaPublishMissingUrlError'];
 
-      return injector.get(SchemaPublisher).publish(
+      const result = await injector.get(SchemaPublisher).publish(
         {
           ...input,
           service: input.service?.toLowerCase(),
@@ -127,6 +143,15 @@ export const resolvers: SchemaModule.Resolvers = {
         },
         abortSignal,
       );
+
+      if ('changes' in result) {
+        return {
+          ...result,
+          changes: result.changes?.map(toGraphQLSchemaChange),
+        };
+      }
+
+      return result;
     },
     async schemaDelete(_, { input }, { injector, abortSignal }) {
       const [organization, project, target] = await Promise.all([
@@ -147,7 +172,7 @@ export const resolvers: SchemaModule.Resolvers = {
         .update(token)
         .digest('base64');
 
-      return injector.get(SchemaPublisher).delete(
+      const result = await injector.get(SchemaPublisher).delete(
         {
           dryRun: input.dryRun,
           serviceName: input.serviceName.toLowerCase(),
@@ -158,6 +183,15 @@ export const resolvers: SchemaModule.Resolvers = {
         },
         abortSignal,
       );
+
+      return {
+        ...result,
+        changes: result.changes?.map(toGraphQLSchemaChange),
+        errors: result.errors?.map(error => ({
+          ...error,
+          path: 'path' in error ? error.path?.split('.') : null,
+        })),
+      };
     },
     async updateSchemaVersionStatus(_, { input }, { injector }) {
       const translator = injector.get(IdTranslator);
@@ -253,67 +287,11 @@ export const resolvers: SchemaModule.Resolvers = {
     },
   },
   Query: {
-    async schemaCompare(_, { selector }, { injector }) {
-      const translator = injector.get(IdTranslator);
-      const schemaManager = injector.get(SchemaManager);
-      const projectManager = injector.get(ProjectManager);
-      const helper = injector.get(SchemaHelper);
-
-      const [organizationId, projectId, targetId] = await Promise.all([
-        translator.translateOrganizationId(selector),
-        translator.translateProjectId(selector),
-        translator.translateTargetId(selector),
-      ]);
-
-      const project = await projectManager.getProject({
-        organization: organizationId,
-        project: projectId,
-      });
-      const orchestrator = schemaManager.matchOrchestrator(project.type);
-
-      // TODO: collect stats from a period between these two versions
-      const [schemasBefore, schemasAfter] = await Promise.all([
-        injector.get(SchemaManager).getSchemasOfVersion({
-          organization: organizationId,
-          project: projectId,
-          target: targetId,
-          version: selector.before,
-        }),
-        injector.get(SchemaManager).getSchemasOfVersion({
-          organization: organizationId,
-          project: projectId,
-          target: targetId,
-          version: selector.after,
-        }),
-      ]);
-
-      return Promise.all([
-        ensureSDL(
-          orchestrator.composeAndValidate(
-            schemasBefore.map(s => helper.createSchemaObject(s)),
-            project.externalComposition,
-          ),
-        ),
-        ensureSDL(
-          orchestrator.composeAndValidate(
-            schemasAfter.map(s => helper.createSchemaObject(s)),
-            project.externalComposition,
-          ),
-        ),
-      ]).catch(reason => {
-        if (reason instanceof SchemaBuildError) {
-          return Promise.resolve({
-            message: reason.message,
-          });
-        }
-
-        return Promise.reject(reason);
-      });
-    },
     async schemaCompareToPrevious(_, { selector }, { injector }) {
       const translator = injector.get(IdTranslator);
       const schemaManager = injector.get(SchemaManager);
       const projectManager = injector.get(ProjectManager);
+      const organizationManager = injector.get(OrganizationManager);
       const helper = injector.get(SchemaHelper);
 
       const [organizationId, projectId, targetId] = await Promise.all([
@@ -322,19 +300,112 @@ export const resolvers: SchemaModule.Resolvers = {
         translator.translateTargetId(selector),
       ]);
 
-      const project = await projectManager.getProject({
+      const [project, organization] = await Promise.all([
+        projectManager.getProject({
+          organization: organizationId,
+          project: projectId,
+        }),
+        organizationManager.getOrganization({
+          organization: organizationId,
+        }),
+      ]);
+
+      const currentVersion = await schemaManager.getSchemaVersion({
         organization: organizationId,
         project: projectId,
+        target: targetId,
+        version: selector.version,
       });
+
+      if (currentVersion.schemaCompositionErrors) {
+        return {
+          error: new SchemaBuildError('Composition error', currentVersion.schemaCompositionErrors),
+        } as SchemaCompareError;
+      }
+
+      const previousVersion = currentVersion.previousSchemaVersionId
+        ? await schemaManager.getSchemaVersion({
+            organization: organizationId,
+            project: projectId,
+            target: targetId,
+            version: currentVersion.previousSchemaVersionId,
+          })
+        : null;
+
+      if (currentVersion.compositeSchemaSDL && previousVersion === null) {
+        return {
+          result: {
+            schemas: {
+              before: null,
+              current: currentVersion.compositeSchemaSDL,
+            },
+            changes: [],
+          },
+        } satisfies SchemaCompareResult;
+      }
+
+      const getBeforeSchemaSDL = async () => {
+        const orchestrator = schemaManager.matchOrchestrator(project.type);
+
+        const schemasBefore = await injector.get(SchemaManager).getSchemasOfPreviousVersion({
+          organization: organizationId,
+          project: projectId,
+          target: targetId,
+          version: selector.version,
+          onlyComposable: organization.featureFlags.compareToPreviousComposableVersion === true,
+        });
+
+        if (schemasBefore.length === 0) {
+          return null;
+        }
+        const { raw } = await ensureSDL(
+          orchestrator.composeAndValidate(
+            schemasBefore.map(s => helper.createSchemaObject(s)),
+            project.externalComposition,
+          ),
+        );
+
+        console.log('THIS IS RAW', raw);
+        return raw;
+      };
+
+      if (currentVersion.compositeSchemaSDL && currentVersion.hasPersistedSchemaChanges) {
+        const changes = await schemaManager.getSchemaChangesForVersion({
+          organization: organizationId,
+          project: projectId,
+          target: targetId,
+          version: currentVersion.id,
+        });
+
+        return {
+          result: {
+            schemas: {
+              before:
+                previousVersion === null
+                  ? null
+                  : previousVersion.compositeSchemaSDL ?? (await getBeforeSchemaSDL()),
+              current: currentVersion.compositeSchemaSDL,
+            },
+            changes: changes ?? [],
+          },
+        } satisfies SchemaCompareResult;
+      }
+
+      // LEGACY LAND
+      // If we don't have the stuff in the database we compute it on demand.
+      // so we can skip the expensive stuff happening in here...
+
+      // console.log('\n\nCERTIFIED LEG LEG LEGACY CODE\n\n');
+
       const orchestrator = schemaManager.matchOrchestrator(project.type);
 
-      // TODO: collect stats from a period between these two versions
       const [schemasBefore, schemasAfter] = await Promise.all([
         injector.get(SchemaManager).getSchemasOfPreviousVersion({
           organization: organizationId,
           project: projectId,
           target: targetId,
           version: selector.version,
+          onlyComposable: organization.featureFlags.compareToPreviousComposableVersion === true,
         }),
         injector.get(SchemaManager).getSchemasOfVersion({
           organization: organizationId,
@@ -358,16 +429,73 @@ export const resolvers: SchemaModule.Resolvers = {
             schemasAfter.map(s => helper.createSchemaObject(s)),
             project.externalComposition,
           ),
+          organization.featureFlags.compareToPreviousComposableVersion === true
+            ? // Do not show schema changes if the new version is not composable
+              // It only applies when the feature flag is enabled.
+              // Otherwise, we show the errors as usual.
+              'reject-on-graphql-errors'
+            : 'ignore-errors',
         ),
-      ]).catch(reason => {
-        if (reason instanceof SchemaBuildError) {
-          return Promise.resolve({
-            message: reason.message,
-          });
-        }
+      ])
+        .then(async ([before, after]) => {
+          let changes: SerializableChange[] = [];
 
-        return Promise.reject(reason);
-      });
+          if (before) {
+            const previousSchema = buildSchema(
+              before,
+              error =>
+                new GraphQLError(
+                  `Failed to build the previous version: ${
+                    error instanceof GraphQLError ? error.message : error
+                  }`,
+                ),
+            );
+            const currentSchema = buildSchema(
+              after,
+              error =>
+                new GraphQLError(
+                  `Failed to build the selected version: ${
+                    error instanceof GraphQLError ? error.message : error
+                  }`,
+                ),
+            );
+            const diffChanges = await injector.get(Inspector).diff(previousSchema, currentSchema);
+            changes = diffChanges.map(change => ({
+              ...change,
+              isSafeBasedOnUsage: change.criticality.isSafeBasedOnUsage ?? false,
+            }));
+          }
+
+          changes.push(
+            ...detectUrlChanges(schemasBefore, schemasAfter).map(change => ({
+              ...change,
+              isSafeBasedOnUsage: false,
+            })),
+          );
+
+          const result: SchemaCompareResult = {
+            result: {
+              schemas: {
+                before: before?.raw ?? null,
+                current: after.raw,
+              },
+              changes,
+            },
+          };
+
+          return result;
+        })
+
+        .catch(reason => {
+          if (reason instanceof SchemaBuildError) {
+            const result: SchemaCompareError = {
+              error: reason,
+            };
+            return Promise.resolve(result);
+          }
+
+          return Promise.reject(reason);
+        });
     },
     async schemaVersions(_, { selector, after, limit }, { injector }) {
       const translator = injector.get(IdTranslator);
@@ -609,7 +737,7 @@ export const resolvers: SchemaModule.Resolvers = {
       ).raw;
     },
     async baseSchema(version) {
-      return version.base_schema || null;
+      return version.baseSchema || null;
     },
     async explorer(version, { usage }, { injector }) {
       const project = await injector.get(ProjectManager).getProject({
@@ -650,47 +778,34 @@ export const resolvers: SchemaModule.Resolvers = {
     },
   },
   SchemaCompareError: {
-    __isTypeOf(error) {
-      return 'message' in error;
+    __isTypeOf(source: unknown) {
+      return typeof source === 'object' && source != null && 'error' in source;
     },
+    message: source => source.error.message,
+    details: source =>
+      source.error.errors.map(err => ({
+        message: err.message,
+        type: err.source,
+      })),
   },
   SchemaCompareResult: {
-    __isTypeOf(obj) {
-      return Array.isArray(obj);
+    __isTypeOf(source: unknown) {
+      return typeof source === 'object' && source != null && 'result' in source;
     },
-    initial([before]) {
-      return !before;
+    initial(source) {
+      return source.result.schemas.before === null;
     },
-    changes([before, after], _, { injector }) {
-      if (!before) {
-        return [];
-      }
-
-      const previousSchema = buildSchema(
-        before,
-        error =>
-          new GraphQLError(
-            `Failed to build the previous version: ${
-              error instanceof GraphQLError ? error.message : error
-            }`,
-          ),
+    async changes(source) {
+      return source.result.changes.map(change =>
+        toGraphQLSchemaChange(schemaChangeFromMeta(change)),
       );
-      const currentSchema = buildSchema(
-        after,
-        error =>
-          new GraphQLError(
-            `Failed to build the selected version: ${
-              error instanceof GraphQLError ? error.message : error
-            }`,
-          ),
-      );
-
-      return injector.get(Inspector).diff(previousSchema, currentSchema);
     },
-    diff([before, after]) {
+    diff(source) {
+      const { before, current } = source.result.schemas;
+
       return {
-        before: before ? before.raw : '',
-        after: after.raw,
+        before: before ?? '',
+        after: current,
       };
     },
   },
@@ -716,14 +831,6 @@ export const resolvers: SchemaModule.Resolvers = {
       return schema.service_url;
     },
   },
-  // DeletedCompositeSchema: {
-  //   __isTypeOf(obj) {
-  //     return obj.kind === 'composite' && obj.action === 'DELETE';
-  //   },
-  //   service(schema) {
-  //     return schema.service_name;
-  //   },
-  // },
   SchemaConnection: createConnection(),
   SchemaVersionConnection: {
     pageInfo(info) {

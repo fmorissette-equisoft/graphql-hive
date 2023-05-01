@@ -6,6 +6,7 @@ import { swapServices } from '../schema-helper';
 import type { PublishInput } from '../schema-publisher';
 import type {
   DeletedCompositeSchema,
+  Organization,
   Project,
   PushedCompositeSchema,
   Target,
@@ -48,7 +49,9 @@ export class CompositeModel {
     input,
     selector,
     latest,
+    latestComposable,
     project,
+    organization,
     baseSchema,
   }: {
     input: {
@@ -64,8 +67,13 @@ export class CompositeModel {
       isComposable: boolean;
       schemas: PushedCompositeSchema[];
     } | null;
+    latestComposable: {
+      isComposable: boolean;
+      schemas: PushedCompositeSchema[];
+    } | null;
     baseSchema: string | null;
     project: Project;
+    organization: Organization;
   }): Promise<SchemaCheckResult> {
     const incoming: PushedCompositeSchema = {
       kind: 'composite',
@@ -86,6 +94,7 @@ export class CompositeModel {
       ? swapServices(latestVersion.schemas, incoming).schemas
       : [incoming];
     const initial = latest === null;
+    const compareToLatest = organization.featureFlags.compareToPreviousComposableVersion === false;
 
     const serviceNameCheck = await this.checks.serviceName({
       name: incoming.service_name,
@@ -135,7 +144,8 @@ export class CompositeModel {
         project,
         schemas,
         selector,
-        latestVersion,
+        version: compareToLatest ? latest : latestComposable,
+        includeUrlChanges: false,
       }),
     ]);
 
@@ -150,11 +160,20 @@ export class CompositeModel {
       }
 
       if (diffCheck.status === 'failed') {
-        reasons.push({
-          code: CheckFailureReasonCode.BreakingChanges,
-          changes: diffCheck.reason.changes ?? [],
-          breakingChanges: diffCheck.reason.breakingChanges,
-        });
+        if (diffCheck.reason.changes) {
+          reasons.push({
+            code: CheckFailureReasonCode.BreakingChanges,
+            changes: diffCheck.reason.changes ?? [],
+            breakingChanges: diffCheck.reason.breakingChanges,
+          });
+        }
+
+        if (diffCheck.reason.compareFailure) {
+          reasons.push({
+            code: CheckFailureReasonCode.CompositionFailure,
+            compositionErrors: [diffCheck.reason.compareFailure],
+          });
+        }
       }
 
       return {
@@ -175,14 +194,21 @@ export class CompositeModel {
   async publish({
     input,
     target,
-    latest,
     project,
+    organization,
+    latest,
+    latestComposable,
     baseSchema,
   }: {
     input: PublishInput;
     project: Project;
+    organization: Organization;
     target: Target;
     latest: {
+      isComposable: boolean;
+      schemas: PushedCompositeSchema[];
+    } | null;
+    latestComposable: {
       isComposable: boolean;
       schemas: PushedCompositeSchema[];
     } | null;
@@ -206,6 +232,7 @@ export class CompositeModel {
     const swap = latestVersion ? swapServices(latestVersion.schemas, incoming) : null;
     const previousService = swap?.existing;
     const schemas = swap?.schemas ?? [incoming];
+    const compareToLatest = organization.featureFlags.compareToPreviousComposableVersion === false;
 
     const [serviceNameCheck, serviceUrlCheck] = await Promise.all([
       this.checks.serviceName({
@@ -282,7 +309,8 @@ export class CompositeModel {
           project: project.id,
           organization: project.orgId,
         },
-        latestVersion,
+        version: compareToLatest ? latest : latestComposable,
+        includeUrlChanges: true,
       }),
     ]);
 
@@ -316,15 +344,17 @@ export class CompositeModel {
       compositionCheck.status === 'failed' &&
       compositionCheck.reason.errorsBySource.graphql.length > 0
     ) {
-      return {
-        conclusion: SchemaPublishConclusion.Reject,
-        reasons: [
-          {
-            code: PublishFailureReasonCode.CompositionFailure,
-            compositionErrors: compositionCheck.reason.errorsBySource.graphql,
-          },
-        ],
-      };
+      if (compareToLatest) {
+        return {
+          conclusion: SchemaPublishConclusion.Reject,
+          reasons: [
+            {
+              code: PublishFailureReasonCode.CompositionFailure,
+              compositionErrors: compositionCheck.reason.errorsBySource.graphql,
+            },
+          ],
+        };
+      }
     }
 
     return {
@@ -335,7 +365,7 @@ export class CompositeModel {
         changes: diffCheck.result?.changes ?? diffCheck.reason?.changes ?? null,
         messages,
         breakingChanges: null,
-        compositionErrors: null,
+        compositionErrors: compositionCheck.reason?.errors ?? null,
         schema: incoming,
         schemas,
         supergraph: compositionCheck.result?.supergraph ?? null,
@@ -347,6 +377,8 @@ export class CompositeModel {
   async delete({
     input,
     latest,
+    latestComposable,
+    organization,
     project,
     selector,
     baseSchema,
@@ -355,6 +387,7 @@ export class CompositeModel {
       serviceName: string;
     };
     project: Project;
+    organization: Organization;
     selector: {
       target: string;
       project: string;
@@ -365,6 +398,10 @@ export class CompositeModel {
       isComposable: boolean;
       schemas: PushedCompositeSchema[];
     };
+    latestComposable: {
+      isComposable: boolean;
+      schemas: PushedCompositeSchema[];
+    } | null;
   }): Promise<SchemaDeleteResult> {
     const incoming: DeletedCompositeSchema = {
       kind: 'composite',
@@ -376,6 +413,7 @@ export class CompositeModel {
     };
 
     const latestVersion = latest;
+    const compareToLatest = organization.featureFlags.compareToPreviousComposableVersion === false;
 
     const serviceNameCheck = await this.checks.serviceName({
       name: incoming.service_name,
@@ -410,7 +448,8 @@ export class CompositeModel {
         project,
         schemas,
         selector,
-        latestVersion,
+        version: compareToLatest ? latestVersion : latestComposable,
+        includeUrlChanges: true,
       }),
     ]);
 
@@ -418,15 +457,17 @@ export class CompositeModel {
       compositionCheck.status === 'failed' &&
       compositionCheck.reason.errorsBySource.graphql.length > 0
     ) {
-      return {
-        conclusion: SchemaDeleteConclusion.Reject,
-        reasons: [
-          {
-            code: DeleteFailureReasonCode.CompositionFailure,
-            compositionErrors: compositionCheck.reason.errorsBySource.graphql,
-          },
-        ],
-      };
+      if (compareToLatest) {
+        return {
+          conclusion: SchemaDeleteConclusion.Reject,
+          reasons: [
+            {
+              code: DeleteFailureReasonCode.CompositionFailure,
+              compositionErrors: compositionCheck.reason.errorsBySource.graphql,
+            },
+          ],
+        };
+      }
     }
 
     const { changes, breakingChanges } =

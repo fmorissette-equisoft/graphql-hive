@@ -11,7 +11,7 @@ Hive ships a custom build of Apollo Gateway,
 ## Installation and Supergraph from CDN
 
 Once you have all services schemas pushed to Hive, and available in the CDN, you can
-[create a CDN Access Token and gain access to the CDN endpoint](/features/high-availability-cdn#cdn-access-tokens).
+[create a CDN Access Token and gain access to the CDN endpoint](/docs/features/high-availability-cdn#cdn-access-tokens).
 
 <Tabs items={['Binary', 'Docker']}>
   <Tab>
@@ -57,6 +57,7 @@ Once you have all services schemas pushed to Hive, and available in the CDN, you
 - `HIVE_CDN_ENDPOINT` - the endpoint Hive generated for you in the previous step
 - `HIVE_CDN_KEY` - the access key
 - `HIVE_CDN_POLL_INTERVAL` - polling interval (default is 10 seconds)
+- `HIVE_REGISTRY_LOG` - defines the log level for the registry (default is `INFO`)
 
 <Callout>
   The `HIVE_CDN_ENDPOINT` variable should not include any artifact suffix (for example,
@@ -123,5 +124,5 @@ plugins:
 
 ## Additional Resources
 
-- [Get started with Apollo Federation and Hive guide](/get-started/apollo-federation)
+- [Get started with Apollo Federation and Hive guide](/docs/get-started/apollo-federation)
 - [Apollo Router documentation](https://www.apollographql.com/docs/router/)

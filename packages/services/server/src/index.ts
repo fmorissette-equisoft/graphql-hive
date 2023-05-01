@@ -18,7 +18,7 @@ import {
 } from '@hive/service-common';
 import { createConnectionString, createStorage as createPostgreSQLStorage } from '@hive/storage';
 import { Dedupe, ExtraErrorData } from '@sentry/integrations';
-import * as Sentry from '@sentry/node';
+import { captureException, init, Integrations, SeverityLevel } from '@sentry/node';
 import { createServerAdapter } from '@whatwg-node/server';
 import { createContext, internalApiRouter } from './api';
 import { asyncStorage } from './async-storage';
@@ -36,28 +36,27 @@ const LegacyCheckAuth0EmailUserExistsPayloadModel = zod.object({
 });
 
 export async function main() {
-  if (env.sentry) {
-    Sentry.init({
-      serverName: 'api',
-      enabled: true,
-      environment: env.environment,
-      dsn: env.sentry.dsn,
-      tracesSampleRate: 1,
-      release: env.release,
-      integrations: [
-        new Sentry.Integrations.Http({ tracing: true }),
-        new Sentry.Integrations.ContextLines(),
-        new Sentry.Integrations.LinkedErrors(),
-        new ExtraErrorData({
-          depth: 2,
-        }),
-        new Dedupe(),
-      ],
-      maxBreadcrumbs: 5,
-      defaultIntegrations: false,
-      autoSessionTracking: false,
-    });
-  }
+  init({
+    serverName: 'api',
+    enabled: !!env.sentry,
+    environment: env.environment,
+    dsn: env.sentry?.dsn,
+    enableTracing: true,
+    tracesSampleRate: 1,
+    release: env.release,
+    integrations: [
+      new Integrations.Http({ tracing: true }),
+      new Integrations.ContextLines(),
+      new Integrations.LinkedErrors(),
+      new ExtraErrorData({
+        depth: 2,
+      }),
+      new Dedupe(),
+    ],
+    maxBreadcrumbs: 5,
+    defaultIntegrations: false,
+    autoSessionTracking: false,
+  });
 
   const server = await createServer({
     name: 'graphql-api',
@@ -91,12 +90,14 @@ export async function main() {
   registerShutdown({
     logger: server.log,
     async onShutdown() {
+      server.log.info('Stopping HTTP server listener...');
       await server.close();
+      server.log.info('Stopping Storage handler...');
       await storage.destroy();
     },
   });
 
-  function createErrorHandler(level: Sentry.SeverityLevel): LogFn {
+  function createErrorHandler(level: SeverityLevel): LogFn {
     return (error: any, errorLike?: any, ...args: any[]) => {
       server.log.error(error, errorLike, ...args);
 
@@ -108,7 +109,7 @@ export async function main() {
       }
 
       if (errorObj instanceof Error) {
-        Sentry.captureException(errorObj, {
+        captureException(errorObj, {
           level,
           extra: {
             error,
@@ -302,32 +303,34 @@ export async function main() {
       url: '/_readiness',
       async handler(req, res) {
         try {
-          const response = await got.post(`http://0.0.0.0:${port}${graphqlPath}`, {
-            method: 'POST',
-            body: introspection,
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-              'x-signature': signature,
-            },
-          });
+          const [response, storageIsReady] = await Promise.all([
+            got.post(`http://0.0.0.0:${port}${graphqlPath}`, {
+              method: 'POST',
+              body: introspection,
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'x-signature': signature,
+              },
+            }),
+            storage.isReady(),
+          ]);
 
-          await storage.ping();
-
-          if (response.statusCode >= 200 && response.statusCode < 300) {
-            if (response.body.includes('"__schema"')) {
-              reportReadiness(true);
-              res.status(200).send(); // eslint-disable-line @typescript-eslint/no-floating-promises -- false positive, FastifyReply.then returns void
-              return;
-            }
+          if (!storageIsReady) {
+            req.log.error('Readiness check failed: failed to connect to Postgres');
+          } else if (response.statusCode !== 200 || !response.body.includes('"__schema"')) {
+            req.log.error(`Readiness check failed: [${response.statusCode}] ${response.body}`);
+          } else {
+            reportReadiness(true);
+            res.status(200).send(); // eslint-disable-line @typescript-eslint/no-floating-promises -- false positive, FastifyReply.then returns void
+            return;
           }
-          req.log.error(`Readiness check failed [${response.statusCode}] ${response.body}`);
         } catch (error) {
           req.log.error(error);
         }
 
         reportReadiness(false);
-        res.status(500).send(); // eslint-disable-line @typescript-eslint/no-floating-promises -- false positive, FastifyReply.then returns void
+        res.status(400).send(); // eslint-disable-line @typescript-eslint/no-floating-promises -- false positive, FastifyReply.then returns void
       },
     });
 
@@ -441,7 +444,7 @@ export async function main() {
     await server.listen(port, '::');
   } catch (error) {
     server.log.fatal(error);
-    Sentry.captureException(error, {
+    captureException(error, {
       level: 'fatal',
     });
     process.exit(1);
