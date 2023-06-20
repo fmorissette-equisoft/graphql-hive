@@ -3,8 +3,7 @@ import got from 'got';
 import { GraphQLError, stripIgnoredCharacters } from 'graphql';
 import 'reflect-metadata';
 import zod from 'zod';
-import { createRegistry, LogFn, Logger } from '@hive/api';
-import { CryptoProvider } from '@hive/api';
+import { createRegistry, CryptoProvider, LogFn, Logger } from '@hive/api';
 import { createArtifactRequestHandler } from '@hive/cdn-script/artifact-handler';
 import { ArtifactStorageReader } from '@hive/cdn-script/artifact-storage-reader';
 import { AwsClient } from '@hive/cdn-script/aws';
@@ -188,6 +187,9 @@ export async function main() {
       rateLimitService: {
         endpoint: env.hiveServices.rateLimit ? env.hiveServices.rateLimit.endpoint : null,
       },
+      schemaPolicyService: {
+        endpoint: env.hiveServices.schemaPolicy ? env.hiveServices.schemaPolicy.endpoint : null,
+      },
       logger: graphqlLogger,
       storage,
       redis: {
@@ -231,6 +233,11 @@ export async function main() {
               }
 
               return url;
+            },
+            schemaCheckLink(input) {
+              return `${env.hiveServices.webApp!.url}/${input.organization.cleanId}/${
+                input.project.cleanId
+              }/${input.target.cleanId}/checks/${input.schemaCheckId}`;
             },
           }
         : {},

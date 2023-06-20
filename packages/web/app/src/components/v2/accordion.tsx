@@ -4,25 +4,31 @@ import * as A from '@radix-ui/react-accordion';
 import { ChevronDownIcon } from '@radix-ui/react-icons';
 
 type AccordionProps = Partial<
-  Pick<ComponentProps<typeof A.Root>, 'type' | 'disabled' | 'value' | 'onValueChange'>
+  Pick<ComponentProps<typeof A.Root>, 'disabled' | 'value' | 'onValueChange'>
 >;
 
 function Wrapper({
-  defaultValue,
   children,
   type = 'single',
+  defaultValue,
   ...props
 }: {
-  defaultValue?: string;
+  defaultValue?: string | Array<string>;
   children: ReactNode;
-} & AccordionProps): ReactElement {
+} & AccordionProps &
+  (
+    | { type?: 'single'; defaultValue?: string }
+    | { type: 'multiple'; defaultValue?: Array<string> }
+  )): ReactElement {
   return (
+    // @ts-expect-error docs say array is okay
     <A.Root
       {...(props as any[])}
-      type={type as any}
-      collapsible
+      type={type}
       defaultValue={defaultValue}
+      collapsible
       className="space-y-4 w-full"
+      data-cy="accordion"
     >
       {children}
     </A.Root>
@@ -46,9 +52,15 @@ function Item({
   );
 }
 
-function Header({ children }: { children: ReactNode }): ReactElement {
+function Header({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}): ReactElement {
   return (
-    <A.Header className="w-full">
+    <A.Header className={clsx('w-full', className)}>
       <A.Trigger
         className={clsx(
           'group',
@@ -69,9 +81,15 @@ function Header({ children }: { children: ReactNode }): ReactElement {
   );
 }
 
-function Content({ children }: { children: ReactNode }): ReactElement {
+function Content({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}): ReactElement {
   return (
-    <A.Content className="pt-1 w-full rounded-b-lg px-4 pb-3">
+    <A.Content className={clsx('pt-1 w-full rounded-b-lg px-4 pb-3', className)}>
       <div className="text-sm text-gray-700 dark:text-gray-400">{children}</div>
     </A.Content>
   );

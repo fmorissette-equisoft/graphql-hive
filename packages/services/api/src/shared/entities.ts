@@ -1,7 +1,8 @@
-import { DocumentNode, GraphQLError, SourceLocation } from 'graphql';
-import { parse } from 'graphql';
+import { DocumentNode, GraphQLError, parse, SourceLocation } from 'graphql';
 import { z } from 'zod';
+import type { AvailableRulesResponse, PolicyConfigurationObject } from '@hive/policy';
 import type { CompositionFailureError } from '@hive/schema';
+import type { schema_policy_resource, SchemaCompositionError } from '@hive/storage';
 import type {
   AlertChannelType,
   AlertType,
@@ -67,12 +68,13 @@ export interface DateRange {
 export interface SchemaVersion {
   id: string;
   valid: boolean;
-  date: string;
+  createdAt: string;
   commit: string;
   baseSchema: string | null;
   hasPersistedSchemaChanges: boolean;
   previousSchemaVersionId: null | string;
   compositeSchemaSDL: null | string;
+  supergraphSDL: null | string;
   schemaCompositionErrors: Array<SchemaCompositionError> | null;
 }
 
@@ -190,6 +192,54 @@ export interface CDNAccessToken {
   readonly alias: string;
   readonly createdAt: string;
 }
+
+export interface DocumentCollection {
+  id: string;
+  title: string;
+  description: string | null;
+  targetId: string;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PaginatedDocumentCollections = Readonly<{
+  edges: ReadonlyArray<{
+    node: DocumentCollection;
+    cursor: string;
+  }>;
+  pageInfo: Readonly<{
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string;
+    endCursor: string;
+  }>;
+}>;
+
+export interface DocumentCollectionOperation {
+  id: string;
+  title: string;
+  contents: string;
+  variables: string | null;
+  headers: string | null;
+  createdByUserId: string | null;
+  documentCollectionId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PaginatedDocumentCollectionOperations = Readonly<{
+  edges: ReadonlyArray<{
+    node: DocumentCollectionOperation;
+    cursor: string;
+  }>;
+  pageInfo: Readonly<{
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string;
+    endCursor: string;
+  }>;
+}>;
 
 export interface Project {
   id: string;
@@ -315,9 +365,14 @@ export interface AdminOrganizationStats {
   };
 }
 
-export const SchemaCompositionErrorModel = z.object({
-  message: z.string(),
-  source: z.union([z.literal('graphql'), z.literal('composition')]),
-});
+export type SchemaPolicy = {
+  id: string;
+  createdAt: Date;
+  updatedAt: Date;
+  config: PolicyConfigurationObject;
+  resource: schema_policy_resource;
+  resourceId: string;
+  allowOverrides: boolean;
+};
 
-export type SchemaCompositionError = z.TypeOf<typeof SchemaCompositionErrorModel>;
+export type SchemaPolicyAvailableRuleObject = AvailableRulesResponse[0];

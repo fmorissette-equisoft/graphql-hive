@@ -1,11 +1,13 @@
+import { parse, print } from 'graphql';
 import { Inject, Injectable, Scope } from 'graphql-modules';
 import lodash from 'lodash';
 import promClient from 'prom-client';
 import { Change, CriticalityLevel } from '@graphql-inspector/core';
+import { SchemaCheck } from '@hive/storage';
 import * as Sentry from '@sentry/node';
 import type { Span } from '@sentry/types';
 import * as Types from '../../../__generated__/types';
-import { Project, ProjectType, Schema, Target } from '../../../shared/entities';
+import { Organization, Project, ProjectType, Schema, Target } from '../../../shared/entities';
 import { HiveError } from '../../../shared/errors';
 import { bolderize } from '../../../shared/markdown';
 import { sentry } from '../../../shared/sentry';
@@ -21,18 +23,20 @@ import { Logger } from '../../shared/providers/logger';
 import { Mutex } from '../../shared/providers/mutex';
 import { Storage, type TargetSelector } from '../../shared/providers/storage';
 import { TargetManager } from '../../target/providers/target-manager';
+import { toGraphQLSchemaCheck } from '../to-graphql-schema-check';
 import { ArtifactStorageWriter } from './artifact-storage-writer';
 import type { SchemaModuleConfig } from './config';
 import { SCHEMA_MODULE_CONFIG } from './config';
 import { CompositeModel } from './models/composite';
 import { CompositeLegacyModel } from './models/composite-legacy';
 import {
-  CheckFailureReasonCode,
   DeleteFailureReasonCode,
+  formatPolicyError,
   getReasonByCode,
   PublishFailureReasonCode,
   SchemaCheckConclusion,
   SchemaCheckResult,
+  SchemaCheckWarning,
   SchemaDeleteConclusion,
   SchemaPublishConclusion,
   SchemaPublishResult,
@@ -40,7 +44,7 @@ import {
 import { SingleModel } from './models/single';
 import { SingleLegacyModel } from './models/single-legacy';
 import { ensureCompositeSchemas, ensureSingleSchema, SchemaHelper } from './schema-helper';
-import { SchemaManager } from './schema-manager';
+import { inflateSchemaCheck, SchemaManager } from './schema-manager';
 
 const schemaCheckCount = new promClient.Counter({
   name: 'registry_check_count',
@@ -64,8 +68,9 @@ export type CheckInput = Omit<Types.SchemaCheckInput, 'project' | 'organization'
   TargetSelector;
 
 export type DeleteInput = Omit<Types.SchemaDeleteInput, 'project' | 'organization' | 'target'> &
-  TargetSelector & {
+  Omit<TargetSelector, 'target'> & {
     checksum: string;
+    target: Target;
   };
 
 export type PublishInput = Types.SchemaPublishInput &
@@ -158,32 +163,43 @@ export class SchemaPublisher {
       scope: TargetAccessScope.REGISTRY_READ,
     });
 
-    const [target, project, organization, latestVersion, latestComposableVersion] =
-      await Promise.all([
-        this.targetManager.getTarget({
-          organization: input.organization,
-          project: input.project,
-          target: input.target,
-        }),
-        this.projectManager.getProject({
-          organization: input.organization,
-          project: input.project,
-        }),
-        this.organizationManager.getOrganization({
-          organization: input.organization,
-        }),
-        this.schemaManager.getLatestSchemas({
-          organization: input.organization,
-          project: input.project,
-          target: input.target,
-        }),
-        this.schemaManager.getLatestSchemas({
-          organization: input.organization,
-          project: input.project,
-          target: input.target,
-          onlyComposable: true,
-        }),
-      ]);
+    const [
+      target,
+      project,
+      organization,
+      latestVersion,
+      latestComposableVersion,
+      latestSchemaVersion,
+    ] = await Promise.all([
+      this.targetManager.getTarget({
+        organization: input.organization,
+        project: input.project,
+        target: input.target,
+      }),
+      this.projectManager.getProject({
+        organization: input.organization,
+        project: input.project,
+      }),
+      this.organizationManager.getOrganization({
+        organization: input.organization,
+      }),
+      this.schemaManager.getLatestSchemas({
+        organization: input.organization,
+        project: input.project,
+        target: input.target,
+      }),
+      this.schemaManager.getLatestSchemas({
+        organization: input.organization,
+        project: input.project,
+        target: input.target,
+        onlyComposable: true,
+      }),
+      this.schemaManager.getMaybeLatestVersion({
+        organization: input.organization,
+        project: input.project,
+        target: input.target,
+      }),
+    ]);
 
     schemaCheckCount.inc({
       model: project.legacyRegistryModel ? 'legacy' : 'modern',
@@ -208,6 +224,7 @@ export class SchemaPublisher {
     };
 
     const modelVersion = project.legacyRegistryModel ? 'legacy' : 'modern';
+    const sdl = tryPrettifySDL(input.sdl);
 
     let checkResult: SchemaCheckResult;
 
@@ -236,10 +253,27 @@ export class SchemaPublisher {
         break;
       case ProjectType.FEDERATION:
       case ProjectType.STITCHING:
+        if (input.service == null) {
+          this.logger.debug('No service name provided (type=%s)', project.type, modelVersion);
+
+          return {
+            __typename: 'SchemaCheckError',
+            valid: false,
+            changes: [],
+            warnings: [],
+            errors: [
+              {
+                message: 'Missing service name',
+              },
+            ],
+          } as const;
+        }
+
         this.logger.debug('Using %s registry model (version=%s)', project.type, modelVersion);
+
         checkResult = await this.models[project.type][modelVersion].check({
           input: {
-            sdl: input.sdl,
+            sdl,
             serviceName: input.service,
           },
           selector,
@@ -264,79 +298,154 @@ export class SchemaPublisher {
         throw new HiveError(`${project.type} project (${modelVersion}) not supported`);
     }
 
+    let schemaCheck: null | SchemaCheck = null;
+
+    if (checkResult.conclusion === SchemaCheckConclusion.Failure) {
+      schemaCheck = await this.storage.createSchemaCheck({
+        schemaSDL: sdl,
+        serviceName: input.service ?? null,
+        meta: input.meta ?? null,
+        targetId: target.id,
+        schemaVersionId: latestVersion?.version ?? null,
+        isSuccess: false,
+        breakingSchemaChanges: checkResult.state.schemaChanges?.breaking ?? null,
+        safeSchemaChanges: checkResult.state.schemaChanges?.safe ?? null,
+        schemaPolicyWarnings: checkResult.state.schemaPolicy?.warnings ?? null,
+        schemaPolicyErrors: checkResult.state.schemaPolicy?.errors ?? null,
+        ...(checkResult.state.composition.errors
+          ? {
+              schemaCompositionErrors: checkResult.state.composition.errors,
+              compositeSchemaSDL: null,
+              supergraphSDL: null,
+            }
+          : {
+              schemaCompositionErrors: null,
+              compositeSchemaSDL: checkResult.state.composition.compositeSchemaSDL,
+              supergraphSDL: checkResult.state.composition.supergraphSDL,
+            }),
+      });
+    }
+
+    if (checkResult.conclusion === SchemaCheckConclusion.Success) {
+      let composition = checkResult.state?.composition ?? null;
+
+      // in case of a skip this is null
+      if (composition === null) {
+        if (latestVersion == null || latestSchemaVersion == null) {
+          throw new Error(
+            'Composition yielded no composite schema SDL but there is no latest version to fall back to.',
+          );
+        }
+
+        if (latestSchemaVersion.compositeSchemaSDL) {
+          composition = {
+            compositeSchemaSDL: latestSchemaVersion.compositeSchemaSDL,
+            supergraphSDL: latestSchemaVersion.supergraphSDL,
+          };
+        } else {
+          // LEGACY CASE if the schema version record has no sdl
+          // -> we need to do manual composition
+          const orchestrator = this.schemaManager.matchOrchestrator(project.type);
+
+          const result = await orchestrator.composeAndValidate(
+            latestVersion.schemas.map(s => this.helper.createSchemaObject(s)),
+            project.externalComposition,
+          );
+
+          if (result.sdl == null) {
+            throw new Error('Manual composition yielded no composite schema SDL.');
+          }
+
+          composition = {
+            compositeSchemaSDL: result.sdl,
+            supergraphSDL: result.supergraph,
+          };
+        }
+      }
+
+      schemaCheck = await this.storage.createSchemaCheck({
+        schemaSDL: sdl,
+        serviceName: input.service ?? null,
+        meta: input.meta ?? null,
+        targetId: target.id,
+        schemaVersionId: latestVersion?.version ?? null,
+        isSuccess: true,
+        breakingSchemaChanges: null,
+        safeSchemaChanges: checkResult.state?.schemaChanges ?? null,
+        schemaPolicyWarnings: checkResult.state?.schemaPolicyWarnings ?? null,
+        schemaPolicyErrors: null,
+        schemaCompositionErrors: null,
+        compositeSchemaSDL: composition.compositeSchemaSDL,
+        supergraphSDL: composition.supergraphSDL,
+      });
+    }
+
     if (input.github) {
       if (checkResult.conclusion === SchemaCheckConclusion.Success) {
         return this.githubCheck({
           project,
           target,
+          organization,
           serviceName: input.service ?? null,
           sha: input.github.commit,
           conclusion: checkResult.conclusion,
-          changes: checkResult.state.changes ?? null,
+          changes: checkResult.state?.schemaChanges ?? null,
+          warnings: checkResult.state?.schemaPolicyWarnings ?? null,
           breakingChanges: null,
           compositionErrors: null,
           errors: null,
+          schemaCheckId: schemaCheck?.id ?? null,
         });
       }
+
       return this.githubCheck({
         project,
         target,
+        organization,
         serviceName: input.service ?? null,
         sha: input.github.commit,
         conclusion: checkResult.conclusion,
-        changes:
-          getReasonByCode(checkResult, CheckFailureReasonCode.BreakingChanges)?.changes ?? null,
-        breakingChanges:
-          getReasonByCode(checkResult, CheckFailureReasonCode.BreakingChanges)?.breakingChanges ??
-          null,
-        compositionErrors:
-          getReasonByCode(checkResult, CheckFailureReasonCode.CompositionFailure)
-            ?.compositionErrors ?? null,
-        errors: (
-          [] as Array<{
-            message: string;
-          }>
-        ).concat(
-          getReasonByCode(checkResult, CheckFailureReasonCode.MissingServiceName)
-            ? [
-                {
-                  message: 'Missing service name',
-                },
-              ]
-            : [],
-        ),
+        changes: [
+          ...(checkResult.state.schemaChanges?.breaking ?? []),
+          ...(checkResult.state.schemaChanges?.safe ?? []),
+        ],
+        breakingChanges: checkResult.state.schemaChanges?.breaking ?? [],
+        compositionErrors: checkResult.state.composition.errors ?? [],
+        warnings: checkResult.state.schemaPolicy?.warnings ?? [],
+        errors: checkResult.state.schemaPolicy?.errors?.map(formatPolicyError) ?? [],
+        schemaCheckId: schemaCheck?.id ?? null,
       });
+    }
+
+    if (schemaCheck == null) {
+      throw new Error('Invalid state. Schema check can not be null at this point.');
     }
 
     if (checkResult.conclusion === SchemaCheckConclusion.Success) {
       return {
         __typename: 'SchemaCheckSuccess',
         valid: true,
-        changes: checkResult.state.changes ?? [],
-        initial: checkResult.state.initial,
+        changes: checkResult.state?.schemaChanges ?? [],
+        warnings: checkResult.state?.schemaPolicyWarnings ?? [],
+        initial: latestVersion == null,
+        schemaCheck: toGraphQLSchemaCheck(target)(inflateSchemaCheck(schemaCheck)),
       } as const;
     }
 
     return {
       __typename: 'SchemaCheckError',
       valid: false,
-      changes: getReasonByCode(checkResult, CheckFailureReasonCode.BreakingChanges)?.changes ?? [],
-      errors: (
-        [] as Array<{
-          message: string;
-        }>
-      ).concat(
-        getReasonByCode(checkResult, CheckFailureReasonCode.MissingServiceName)
-          ? [
-              {
-                message: 'Missing service name',
-              },
-            ]
-          : [],
-        getReasonByCode(checkResult, CheckFailureReasonCode.BreakingChanges)?.breakingChanges ?? [],
-        getReasonByCode(checkResult, CheckFailureReasonCode.CompositionFailure)
-          ?.compositionErrors ?? [],
-      ),
+      changes: [
+        ...(checkResult.state.schemaChanges?.breaking ?? []),
+        ...(checkResult.state.schemaChanges?.safe ?? []),
+      ],
+      warnings: checkResult.state.schemaPolicy?.warnings ?? [],
+      errors: [
+        ...(checkResult.state.schemaChanges?.breaking ?? []),
+        ...(checkResult.state.schemaPolicy?.errors?.map(formatPolicyError) ?? []),
+        ...(checkResult.state.composition.errors ?? []),
+      ],
+      schemaCheck: toGraphQLSchemaCheck(target)(inflateSchemaCheck(schemaCheck)),
     } as const;
   }
 
@@ -433,7 +542,7 @@ export class SchemaPublisher {
     this.logger.info('Deleting schema (input=%o)', input);
 
     return this.mutex.perform(
-      registryLockId(input.target),
+      registryLockId(input.target.id),
       {
         signal,
       },
@@ -441,7 +550,7 @@ export class SchemaPublisher {
         await this.authManager.ensureTargetAccess({
           organization: input.organization,
           project: input.project,
-          target: input.target,
+          target: input.target.id,
           scope: TargetAccessScope.REGISTRY_WRITE,
         });
         const [project, organization, latestVersion, latestComposableVersion, baseSchema] =
@@ -456,18 +565,18 @@ export class SchemaPublisher {
             this.schemaManager.getLatestSchemas({
               organization: input.organization,
               project: input.project,
-              target: input.target,
+              target: input.target.id,
             }),
             this.schemaManager.getLatestSchemas({
               organization: input.organization,
               project: input.project,
-              target: input.target,
+              target: input.target.id,
               onlyComposable: true,
             }),
             this.schemaManager.getBaseSchema({
               organization: input.organization,
               project: input.project,
-              target: input.target,
+              target: input.target.id,
             }),
           ]);
 
@@ -530,7 +639,7 @@ export class SchemaPublisher {
           project,
           organization,
           selector: {
-            target: input.target,
+            target: input.target.id,
             project: input.project,
             organization: input.organization,
           },
@@ -542,9 +651,32 @@ export class SchemaPublisher {
             await this.storage.deleteSchema({
               organization: input.organization,
               project: input.project,
-              target: input.target,
+              target: input.target.id,
               serviceName: input.serviceName,
               composable: deleteResult.state.composable,
+              changes: deleteResult.state.changes,
+              ...(deleteResult.state.fullSchemaSdl
+                ? {
+                    compositeSchemaSDL: deleteResult.state.fullSchemaSdl,
+                    supergraphSDL: deleteResult.state.supergraph,
+                    schemaCompositionErrors: null,
+                  }
+                : {
+                    compositeSchemaSDL: null,
+                    supergraphSDL: null,
+                    schemaCompositionErrors: deleteResult.state.compositionErrors ?? [],
+                  }),
+              actionFn: async () => {
+                if (deleteResult.state.composable) {
+                  await this.publishToCDN({
+                    target: input.target,
+                    project,
+                    supergraph: deleteResult.state.supergraph,
+                    fullSchemaSdl: deleteResult.state.fullSchemaSdl,
+                    schemas,
+                  });
+                }
+              },
             });
           }
 
@@ -564,11 +696,11 @@ export class SchemaPublisher {
         const errors = [];
 
         const compositionErrors = getReasonByCode(
-          deleteResult,
+          deleteResult.reasons,
           DeleteFailureReasonCode.CompositionFailure,
         )?.compositionErrors;
 
-        if (getReasonByCode(deleteResult, DeleteFailureReasonCode.MissingServiceName)) {
+        if (getReasonByCode(deleteResult.reasons, DeleteFailureReasonCode.MissingServiceName)) {
           errors.push({
             message: 'Service name is required',
           });
@@ -765,14 +897,14 @@ export class SchemaPublisher {
         conclusion: 'rejected',
       });
 
-      if (getReasonByCode(publishResult, PublishFailureReasonCode.MissingServiceName)) {
+      if (getReasonByCode(publishResult.reasons, PublishFailureReasonCode.MissingServiceName)) {
         return {
           __typename: 'SchemaPublishMissingServiceError' as const,
           message: 'Missing service name',
         } as const;
       }
 
-      if (getReasonByCode(publishResult, PublishFailureReasonCode.MissingServiceUrl)) {
+      if (getReasonByCode(publishResult.reasons, PublishFailureReasonCode.MissingServiceUrl)) {
         return {
           __typename: 'SchemaPublishMissingUrlError' as const,
           message: 'Missing service url',
@@ -783,16 +915,18 @@ export class SchemaPublisher {
         __typename: 'SchemaPublishError' as const,
         valid: false,
         changes:
-          getReasonByCode(publishResult, PublishFailureReasonCode.BreakingChanges)?.changes ?? [],
+          getReasonByCode(publishResult.reasons, PublishFailureReasonCode.BreakingChanges)
+            ?.changes ?? [],
         errors: (
           [] as Array<{
             message: string;
           }>
         ).concat(
-          getReasonByCode(publishResult, PublishFailureReasonCode.BreakingChanges)?.changes ?? [],
-          getReasonByCode(publishResult, PublishFailureReasonCode.CompositionFailure)
+          getReasonByCode(publishResult.reasons, PublishFailureReasonCode.BreakingChanges)
+            ?.changes ?? [],
+          getReasonByCode(publishResult.reasons, PublishFailureReasonCode.CompositionFailure)
             ?.compositionErrors ?? [],
-          getReasonByCode(publishResult, PublishFailureReasonCode.MetadataParsingFailure)
+          getReasonByCode(publishResult.reasons, PublishFailureReasonCode.MetadataParsingFailure)
             ? [
                 {
                   message: 'Failed to parse metadata',
@@ -869,10 +1003,12 @@ export class SchemaPublisher {
       ...(fullSchemaSdl
         ? {
             compositeSchemaSDL: fullSchemaSdl,
+            supergraphSDL: supergraph,
             schemaCompositionErrors: null,
           }
         : {
             compositeSchemaSDL: null,
+            supergraphSDL: null,
             schemaCompositionErrors: assertNonNull(
               publishResult.state.compositionErrors,
               "Can't be null",
@@ -943,6 +1079,7 @@ export class SchemaPublisher {
   private async githubCheck({
     project,
     target,
+    organization,
     serviceName,
     sha,
     conclusion,
@@ -950,12 +1087,16 @@ export class SchemaPublisher {
     breakingChanges,
     compositionErrors,
     errors,
+    warnings,
+    schemaCheckId,
   }: {
     project: Project;
     target: Target;
+    organization: Organization;
     serviceName: string | null;
     sha: string;
     conclusion: SchemaCheckConclusion;
+    warnings: SchemaCheckWarning[] | null;
     changes: Array<Change> | null;
     breakingChanges: Array<Change> | null;
     compositionErrors: Array<{
@@ -964,6 +1105,7 @@ export class SchemaPublisher {
     errors: Array<{
       message: string;
     }> | null;
+    schemaCheckId: string | null;
   }) {
     if (!project.gitRepository) {
       return {
@@ -992,6 +1134,7 @@ export class SchemaPublisher {
         title = `Detected ${total} error${total === 1 ? '' : 's'}`;
         summary = [
           errors ? this.errorsToMarkdown(errors) : null,
+          warnings ? this.warningsToMarkdown(warnings) : null,
           compositionErrors ? this.errorsToMarkdown(compositionErrors) : null,
           breakingChanges ? this.errorsToMarkdown(breakingChanges) : null,
           changes ? this.changesToMarkdown(changes) : null,
@@ -1011,6 +1154,15 @@ export class SchemaPublisher {
           title,
           summary,
         },
+        detailsUrl:
+          (schemaCheckId &&
+            this.schemaModuleConfig.schemaCheckLink?.({
+              project,
+              target,
+              organization,
+              schemaCheckId,
+            })) ||
+          null,
       });
 
       return {
@@ -1256,6 +1408,7 @@ export class SchemaPublisher {
           title,
           summary,
         },
+        detailsUrl: null,
       });
       return {
         __typename: 'GitHubSchemaPublishSuccess' as const,
@@ -1272,6 +1425,19 @@ export class SchemaPublisher {
 
   private errorsToMarkdown(errors: ReadonlyArray<{ message: string }>): string {
     return ['', ...errors.map(error => `- ${bolderize(error.message)}`)].join('\n');
+  }
+
+  private warningsToMarkdown(warnings: SchemaCheckWarning[]): string {
+    return [
+      '',
+      ...warnings.map(warning => {
+        const details = [warning.source ? `source: ${warning.source}` : undefined]
+          .filter(Boolean)
+          .join(', ');
+
+        return `- ${bolderize(warning.message)}${details ? ` (${details})` : ''}`;
+      }),
+    ].join('\n');
   }
 
   private changesToMarkdown(changes: ReadonlyArray<Change>): string {
@@ -1320,4 +1486,12 @@ function writeChanges(type: string, changes: ReadonlyArray<Change>, lines: strin
 
 function buildGitHubActionCheckName(target: string, service: string | null) {
   return `GraphQL Hive > schema:check > ${target}` + (service ? ` > ${service}` : '');
+}
+
+function tryPrettifySDL(sdl: string): string {
+  try {
+    return print(parse(sdl));
+  } catch {
+    return sdl;
+  }
 }

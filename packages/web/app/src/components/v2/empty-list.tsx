@@ -1,19 +1,22 @@
 import { ReactElement } from 'react';
 import Image from 'next/image';
 import { Card, DocsLink, Heading } from '@/components/v2/index';
+import { cn } from '@/lib/utils';
 import magnifier from '../../../public/images/figures/magnifier.svg';
 
 export const EmptyList = ({
   title,
   description,
   docsUrl,
+  className,
 }: {
   title: string;
   description: string;
-  docsUrl: string | null;
+  docsUrl?: string | null;
+  className?: string;
 }): ReactElement => {
   return (
-    <Card className="flex grow flex-col items-center gap-y-2">
+    <Card className={cn('flex grow flex-col items-center gap-y-2', className)} data-cy="empty-list">
       <Image
         src={magnifier}
         alt="Magnifier illustration"
@@ -21,11 +24,9 @@ export const EmptyList = ({
         height="200"
         className="drag-none"
       />
-      <Heading>{title}</Heading>
+      <Heading className="text-center">{title}</Heading>
       <span className="text-center text-sm font-medium text-gray-500">{description}</span>
-      {docsUrl === null ? null : (
-        <DocsLink href={docsUrl}>Read about it in the documentation</DocsLink>
-      )}
+      {docsUrl && <DocsLink href={docsUrl}>Read about it in the documentation</DocsLink>}
     </Card>
   );
 };

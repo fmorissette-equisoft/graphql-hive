@@ -1,10 +1,13 @@
 import { URL } from 'node:url';
+import type { GraphQLSchema } from 'graphql';
 import { Injectable, Scope } from 'graphql-modules';
 import hashObject from 'object-hash';
-import { CriticalityLevel } from '@graphql-inspector/core';
+import { CriticalityLevel, type Change } from '@graphql-inspector/core';
+import type { CheckPolicyResponse } from '@hive/policy';
 import type { CompositionFailureError } from '@hive/schema';
 import { Schema } from '../../../shared/entities';
 import { buildSchema } from '../../../shared/schema';
+import { SchemaPolicyProvider } from '../../policy/providers/schema-policy.provider';
 import {
   RegistryServiceUrlChangeSerializableChange,
   schemaChangeFromMeta,
@@ -17,7 +20,8 @@ import type {
 } from './../../../shared/entities';
 import { Logger } from './../../shared/providers/logger';
 import { Inspector } from './inspector';
-import { ensureSDL, extendWithBase, isCompositeSchema, SchemaHelper } from './schema-helper';
+import { SchemaCheckWarning } from './models/shared';
+import { extendWithBase, isCompositeSchema, SchemaHelper } from './schema-helper';
 
 // The reason why I'm using `result` and `reason` instead of just `data` for both:
 // https://bit.ly/hive-check-result-data
@@ -59,7 +63,12 @@ function isGraphQLValidationError(error: CompositionFailureError): error is {
   scope: Scope.Operation,
 })
 export class RegistryChecks {
-  constructor(private helper: SchemaHelper, private inspector: Inspector, private logger: Logger) {}
+  constructor(
+    private helper: SchemaHelper,
+    private policy: SchemaPolicyProvider,
+    private inspector: Inspector,
+    private logger: Logger,
+  ) {}
 
   async checksum({ schemas, latestVersion }: { schemas: Schemas; latestVersion: LatestVersion }) {
     this.logger.debug(
@@ -145,6 +154,64 @@ export class RegistryChecks {
     } satisfies CheckResult;
   }
 
+  async policyCheck({
+    orchestrator,
+    project,
+    schemas,
+    selector,
+    modifiedSdl,
+    baseSchema,
+  }: {
+    orchestrator: Orchestrator;
+    schemas: [SingleSchema] | PushedCompositeSchema[];
+    project: Project;
+    modifiedSdl: string;
+    selector: {
+      organization: string;
+      project: string;
+      target: string;
+    };
+    baseSchema: string | null;
+  }) {
+    const result = await orchestrator.composeAndValidate(
+      extendWithBase(schemas, baseSchema).map(s => this.helper.createSchemaObject(s)),
+      project.externalComposition,
+    );
+
+    if (result.sdl == null) {
+      this.logger.debug('Skip policy check due to no SDL being composed.');
+      return {
+        status: 'skipped',
+      };
+    }
+
+    const policyResult = await this.policy.checkPolicy(result.sdl, modifiedSdl, selector);
+    const warnings = policyResult?.warnings?.map<SchemaCheckWarning>(toSchemaCheckWarning) ?? null;
+
+    if (policyResult === null) {
+      return {
+        status: 'skipped',
+      } satisfies CheckResult;
+    }
+
+    if (policyResult.success) {
+      return {
+        status: 'completed',
+        result: {
+          warnings,
+        },
+      } satisfies CheckResult;
+    }
+
+    return {
+      status: 'failed',
+      reason: {
+        errors: policyResult.errors.map(toSchemaCheckWarning),
+        warnings,
+      },
+    } satisfies CheckResult;
+  }
+
   async diff({
     orchestrator,
     project,
@@ -171,86 +238,93 @@ export class RegistryChecks {
       } satisfies CheckResult;
     }
 
+    const [existingSchemaResult, incomingSchemaResult] = await Promise.all([
+      orchestrator.composeAndValidate(
+        version.schemas.map(s => this.helper.createSchemaObject(s)),
+        project.externalComposition,
+      ),
+      orchestrator.composeAndValidate(
+        schemas.map(s => this.helper.createSchemaObject(s)),
+        project.externalComposition,
+      ),
+    ]);
+
+    if (existingSchemaResult.sdl == null || incomingSchemaResult.sdl == null) {
+      this.logger.debug('Skip policy check due to no SDL being composed.');
+      return {
+        status: 'skipped',
+      } satisfies CheckResult;
+    }
+
+    let existingSchema: GraphQLSchema;
+    let incomingSchema: GraphQLSchema;
+
     try {
-      const [existingSchema, incomingSchema] = await Promise.all([
-        ensureSDL(
-          orchestrator.composeAndValidate(
-            version.schemas.map(s => this.helper.createSchemaObject(s)),
-            project.externalComposition,
-          ),
-        ).then(schema => {
-          return buildSchema(
-            this.helper.createSchemaObject({
-              sdl: schema.raw,
-            }),
-          );
+      existingSchema = buildSchema(
+        this.helper.createSchemaObject({
+          sdl: existingSchemaResult.sdl,
         }),
-        ensureSDL(
-          orchestrator.composeAndValidate(
-            schemas.map(s => this.helper.createSchemaObject(s)),
-            project.externalComposition,
-          ),
-        ).then(schema => {
-          return buildSchema(
-            this.helper.createSchemaObject({
-              sdl: schema.raw,
-            }),
-          );
-        }),
-      ]);
-
-      const changes = [...(await this.inspector.diff(existingSchema, incomingSchema, selector))];
-
-      if (includeUrlChanges) {
-        changes.push(
-          ...detectUrlChanges(version.schemas, schemas).map(change =>
-            schemaChangeFromMeta({
-              ...change,
-              isSafeBasedOnUsage: false,
-            }),
-          ),
-        );
-      }
-
-      const breakingChanges = changes.filter(
-        change => change.criticality.level === CriticalityLevel.Breaking,
       );
 
-      const hasBreakingChanges = breakingChanges.length > 0;
-
-      if (hasBreakingChanges) {
-        this.logger.debug('Detected breaking changes');
-        return {
-          status: 'failed',
-          reason: {
-            breakingChanges,
-            changes,
-          },
-        } satisfies CheckResult;
-      }
-
-      if (changes.length) {
-        this.logger.debug('Detected non-breaking changes');
-      }
-
+      incomingSchema = buildSchema(
+        this.helper.createSchemaObject({
+          sdl: incomingSchemaResult.sdl,
+        }),
+      );
+    } catch (error) {
+      this.logger.error('Failed to build schema for diff. Skip diff check.');
       return {
-        status: 'completed',
-        result: {
-          changes,
-        },
+        status: 'skipped',
       } satisfies CheckResult;
-    } catch (error: unknown) {
-      this.logger.debug('Failed to compare schemas (error=%s)', (error as Error).message);
+    }
 
+    const changes = [...(await this.inspector.diff(existingSchema, incomingSchema, selector))];
+
+    if (includeUrlChanges) {
+      changes.push(
+        ...detectUrlChanges(version.schemas, schemas).map(change =>
+          schemaChangeFromMeta({
+            ...change,
+            isSafeBasedOnUsage: false,
+          }),
+        ),
+      );
+    }
+
+    const safeChanges: Array<Change> = [];
+    const breakingChanges: Array<Change> = [];
+    for (const change of changes) {
+      if (change.criticality.level === CriticalityLevel.Breaking) {
+        breakingChanges.push(change);
+        continue;
+      }
+      safeChanges.push(change);
+    }
+
+    const hasBreakingChanges = breakingChanges.length > 0;
+
+    if (hasBreakingChanges) {
+      this.logger.debug('Detected breaking changes');
       return {
         status: 'failed',
         reason: {
-          compareFailure: {
-            message: `Failed to compare schemas: ${(error as Error).message}`,
-          },
+          breakingChanges,
+          safeChanges,
+          changes,
         },
       } satisfies CheckResult;
     }
+
+    if (changes.length) {
+      this.logger.debug('Detected non-breaking changes');
+    }
+
+    return {
+      status: 'completed',
+      result: {
+        changes,
+      },
+    } satisfies CheckResult;
   }
 
   async serviceName(service: { name: string | null }) {
@@ -310,7 +384,7 @@ export class RegistryChecks {
               after: service.url,
               message: service.url
                 ? `New service url: ${service.url} (previously: ${existingService.url ?? 'none'})`
-                : `Service url removed (previously: ${existingService.url ?? 'none'}`,
+                : `Service url removed (previously: ${existingService.url ?? 'none'})`,
               status: 'modified' as const,
             }
           : {
@@ -421,3 +495,13 @@ export function detectUrlChanges(
 
   return changes;
 }
+
+const toSchemaCheckWarning = (record: CheckPolicyResponse[number]): SchemaCheckWarning => ({
+  message: record.message,
+  source: record.ruleId ? `policy-${record.ruleId}` : 'policy',
+  column: record.column,
+  line: record.line,
+  ruleId: record.ruleId ?? 'policy',
+  endColumn: record.endColumn ?? null,
+  endLine: record.endLine ?? null,
+});

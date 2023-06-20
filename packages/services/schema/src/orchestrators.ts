@@ -1,7 +1,6 @@
 import { createHmac } from 'crypto';
 import type { FastifyRequest } from 'fastify';
-import got from 'got';
-import { RequestError } from 'got';
+import got, { RequestError } from 'got';
 import type { DocumentNode } from 'graphql';
 import {
   ASTNode,
@@ -251,6 +250,20 @@ async function callExternalService(
     return JSON.parse(response.body) as unknown;
   } catch (error) {
     if (error instanceof RequestError) {
+      if (!error.response) {
+        logger.info('Network error without response. (%s)', error.message);
+        return {
+          type: 'failure',
+          result: {
+            errors: [
+              {
+                message: `External composition network failure. Is the service reachable?`,
+                source: 'graphql',
+              },
+            ],
+          },
+        } satisfies CompositionFailure;
+      }
       if (error.response) {
         const message = error.response.body ? error.response.body : error.response.statusMessage;
 

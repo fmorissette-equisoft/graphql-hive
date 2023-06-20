@@ -35,12 +35,15 @@ const config = {
         scalars: {
           DateTime: 'string',
           SafeInt: 'number',
+          ID: 'string',
         },
         mappers: {
           SchemaChangeConnection:
             '../shared/mappers#SchemaChangeConnection as SchemaChangeConnectionMapper',
           SchemaErrorConnection:
             '../shared/mappers#SchemaErrorConnection as SchemaErrorConnectionMapper',
+          SchemaWarningConnection:
+            '../shared/mappers#SchemaWarningConnection as SchemaWarningConnectionMapper',
           OrganizationConnection:
             '../shared/mappers#OrganizationConnection as OrganizationConnectionMapper',
           UserConnection: '../shared/mappers#UserConnection as UserConnectionMapper',
@@ -107,6 +110,18 @@ const config = {
             '../shared/entities#OrganizationInvitation as OrganizationInvitationMapper',
           OIDCIntegration: '../shared/entities#OIDCIntegration as OIDCIntegrationMapper',
           User: '../shared/entities#User as UserMapper',
+          SchemaPolicy: '../shared/entities#SchemaPolicy as SchemaPolicyMapper',
+          SchemaPolicyRule: '../shared/entities#SchemaPolicyAvailableRuleObject',
+          SchemaCoordinateUsage: '../shared/mappers#SchemaCoordinateUsageTypeMapper',
+          DocumentCollection: '../shared/entities#DocumentCollection as DocumentCollectionEntity',
+          DocumentCollectionOperation:
+            '../shared/entities#DocumentCollectionOperation as DocumentCollectionOperationEntity',
+          DocumentCollectionConnection: '../shared/entities#PaginatedDocumentCollections',
+          DocumentCollectionOperationsConnection:
+            '../shared/entities#PaginatedDocumentCollectionOperations',
+          FailedSchemaCheck: '../shared/mappers#FailedSchemaCheckMapper',
+          SuccessfulSchemaCheck: '../shared/mappers#SuccessfulSchemaCheckMapper',
+          SchemaPolicyWarningConnection: '../shared/mappers#SchemaPolicyWarningConnectionMapper',
         },
       },
     },
@@ -122,6 +137,7 @@ const config = {
         scalars: {
           DateTime: 'string',
           SafeInt: 'number',
+          JSONSchemaObject: 'json-schema-typed#JSONSchema',
         },
       },
     },
@@ -134,6 +150,13 @@ const config = {
         '!./packages/web/app/pages/api/github/setup-callback.ts',
       ],
       preset: 'client',
+      config: {
+        scalars: {
+          DateTime: 'string',
+          SafeInt: 'number',
+          JSONSchemaObject: 'json-schema-typed#JSONSchema',
+        },
+      },
       plugins: [],
     },
     // CLI
@@ -155,7 +178,7 @@ const config = {
     },
     // Integration tests
     './integration-tests/testkit/gql/': {
-      documents: './integration-tests/(testkit|tests)/**/*.ts',
+      documents: ['./integration-tests/(testkit|tests)/**/*.ts'],
       preset: 'client',
       plugins: [],
     },

@@ -19,23 +19,24 @@
     "test": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/*.test.ts"
   },
   "dependencies": {
+    "@graphql-hive/core": "workspace:*",
     "@slonik/migrator": "0.11.3",
-    "@whatwg-node/fetch": "0.8.8",
+    "@whatwg-node/fetch": "0.9.6",
     "bcryptjs": "2.4.3",
-    "dotenv": "16.0.3",
-    "got": "12.6.0",
+    "dotenv": "16.3.1",
+    "got": "12.6.1",
     "p-limit": "4.0.0",
     "slonik": "30.4.4",
     "ts-node": "10.9.1",
-    "typescript": "5.0.4",
+    "typescript": "5.1.3",
     "zod": "3.21.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "2.4.2",
-    "@types/node": "18.16.0",
-    "@types/pg": "8.6.6",
+    "@types/node": "18.16.18",
+    "@types/pg": "8.10.2",
     "copyfiles": "2.4.1",
-    "pg-promise": "11.4.3",
-    "tslib": "2.5.0"
+    "pg-promise": "11.5.0",
+    "tslib": "2.5.3"
   }
 }

@@ -50,24 +50,6 @@ fragment TargetEssentials on Target {
   hasSchema
 }
 
-fragment SingleSchemaFields on SingleSchema {
-  __typename
-  id
-  author
-  source
-  commit
-}
-
-fragment CompositeSchemaFields on CompositeSchema {
-  __typename
-  id
-  author
-  source
-  service
-  url
-  commit
-}
-
 fragment MemberFields on Member {
   id
   user {
@@ -141,6 +123,11 @@ fragment SchemaCompareResultFields on SchemaCompareResult {
   diff {
     before
     after
+  }
+  service {
+    name
+    after
+    before
   }
 }
 
@@ -371,34 +358,6 @@ fragment TargetValidationSettingsFields on TargetValidationSettings {
   excludedClients
 }
 
-fragment AlertSlackChannelFields on AlertSlackChannel {
-  id
-  name
-  type
-  channel
-}
-
-fragment AlertWebhookChannelFields on AlertWebhookChannel {
-  id
-  name
-  type
-  endpoint
-}
-fragment AlertFields on Alert {
-  id
-  type
-  channel {
-    id
-    name
-    type
-  }
-  target {
-    id
-    cleanId
-    name
-  }
-}
-
 fragment BillingInvoiceFields on BillingInvoice {
   id
   amount
@@ -406,6 +365,7 @@ fragment BillingInvoiceFields on BillingInvoice {
   date
   periodStart
   periodEnd
+  status
 }
 
 fragment OrgRateLimitFields on Organization {

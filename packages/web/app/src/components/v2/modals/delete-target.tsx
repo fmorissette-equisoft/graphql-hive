@@ -2,19 +2,23 @@ import { ReactElement } from 'react';
 import { useRouter } from 'next/router';
 import { useMutation } from 'urql';
 import { Button, Heading, Modal } from '@/components/v2';
-import { TrashIcon } from '@/components/v2/icon';
 import { DeleteTargetDocument } from '@/graphql';
-import { useRouteSelector } from '@/lib/hooks';
+import { TrashIcon } from '@radix-ui/react-icons';
 
 export const DeleteTargetModal = ({
   isOpen,
   toggleModalOpen,
+  organizationId,
+  projectId,
+  targetId,
 }: {
   isOpen: boolean;
   toggleModalOpen: () => void;
+  organizationId: string;
+  projectId: string;
+  targetId: string;
 }): ReactElement => {
   const [, mutate] = useMutation(DeleteTargetDocument);
-  const router = useRouteSelector();
   const { replace } = useRouter();
 
   return (
@@ -23,7 +27,7 @@ export const DeleteTargetModal = ({
       onOpenChange={toggleModalOpen}
       className="flex flex-col items-center gap-5"
     >
-      <TrashIcon className="h-24 w-24 text-red-500 opacity-70" />
+      <TrashIcon className="h-16 w-auto text-red-500 opacity-70" />
       <Heading>Delete target</Heading>
       <p className="text-sm text-gray-500">
         Are you sure you wish to delete this target? This action is irreversible!
@@ -39,13 +43,13 @@ export const DeleteTargetModal = ({
           onClick={async () => {
             await mutate({
               selector: {
-                organization: router.organizationId,
-                project: router.projectId,
-                target: router.targetId,
+                organization: organizationId,
+                project: projectId,
+                target: targetId,
               },
             });
             toggleModalOpen();
-            void replace(`/${router.organizationId}/${router.projectId}`);
+            void replace(`/${organizationId}/${projectId}`);
           }}
         >
           Delete

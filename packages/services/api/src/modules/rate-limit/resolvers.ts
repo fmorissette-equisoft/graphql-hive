@@ -1,5 +1,5 @@
-import { Logger } from './../shared/providers/logger';
 import { RateLimitModule } from './__generated__/types';
+import { Logger } from './../shared/providers/logger';
 import { RateLimitProvider } from './providers/rate-limit.provider';
 
 export const resolvers: RateLimitModule.Resolvers = {
@@ -17,7 +17,7 @@ export const resolvers: RateLimitModule.Resolvers = {
         });
 
         logger.debug('Fetched rate-limit info:', { orgId: org.id, operationsRateLimit });
-        limitedForOperations = operationsRateLimit.limited;
+        limitedForOperations = operationsRateLimit.usagePercenrage >= 1;
       } catch (e) {
         logger.error('Failed to fetch rate-limit info:', org.id, e);
       }

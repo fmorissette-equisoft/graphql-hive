@@ -149,13 +149,13 @@ export const resolvers: OperationsModule.Resolvers = {
       return operations
         .map(op => {
           return {
-            id: hash(`${op.operationName}__${op.operationHash!}`),
+            id: hash(`${op.operationName}__${op.operationHash}`),
             kind: op.kind,
             name: op.operationName,
             count: op.count,
             countOk: op.countOk,
             percentage: op.percentage,
-            duration: durations.get(op.operationHash!)!,
+            duration: durations.get(op.operationHash)!,
             operationHash: op.operationHash,
           };
         })
@@ -327,6 +327,29 @@ export const resolvers: OperationsModule.Resolvers = {
       return injector.get(OperationsManager).hasOperationsForOrganization({
         organization: organization.id,
       });
+    },
+  },
+  Project: {
+    async requestsOverTime(project, { resolution, period }, { injector }) {
+      return injector.get(OperationsManager).readRequestsOverTimeOfProject({
+        project: project.id,
+        organization: project.orgId,
+        period: parseDateRangeInput(period),
+        resolution,
+      });
+    },
+  },
+  Target: {
+    async requestsOverTime(target, { resolution, period }, { injector }) {
+      const result = await injector.get(OperationsManager).readRequestsOverTimeOfTargets({
+        project: target.projectId,
+        organization: target.orgId,
+        targets: [target.id],
+        period: parseDateRangeInput(period),
+        resolution,
+      });
+
+      return result[target.id] ?? [];
     },
   },
 };

@@ -1,10 +1,10 @@
 import { Inject, Injectable, InjectionToken, Scope } from 'graphql-modules';
 import { App } from '@octokit/app';
+import type { IntegrationsModule } from '../__generated__/types';
 import { AuthManager } from '../../auth/providers/auth-manager';
 import { OrganizationAccessScope } from '../../auth/providers/organization-access';
 import { Logger } from '../../shared/providers/logger';
 import { OrganizationSelector, Storage } from '../../shared/providers/storage';
-import type { IntegrationsModule } from '../__generated__/types';
 
 export interface GitHubApplicationConfig {
   appId: number;
@@ -146,6 +146,7 @@ export class GitHubIntegrationManager {
       name: string;
       sha: string;
       conclusion: 'success' | 'neutral' | 'failure';
+      detailsUrl: string | null;
       output?: {
         /** The title of the check run. */
         title: string;
@@ -183,6 +184,7 @@ export class GitHubIntegrationManager {
       head_sha: input.sha,
       conclusion: input.conclusion,
       output: input.output,
+      details_url: input.detailsUrl ?? undefined,
     });
 
     this.logger.debug('Check-run created (link=%s)', result.data.url);

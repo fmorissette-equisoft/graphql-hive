@@ -1,9 +1,9 @@
-import {
-  PushedCompositeSchema,
-  SchemaCompositionError,
-  SingleSchema,
-} from 'packages/services/api/src/shared/entities';
+import { PushedCompositeSchema, SingleSchema } from 'packages/services/api/src/shared/entities';
 import { Change } from '@graphql-inspector/core';
+import type { CheckPolicyResponse } from '@hive/policy';
+import { CompositionFailureError } from '@hive/schema';
+import type { SchemaCompositionError } from '@hive/storage';
+import { type RegistryChecks } from '../registry-checks';
 
 export const SchemaPublishConclusion = {
   /**
@@ -58,42 +58,65 @@ export type SchemaDeleteConclusion =
   (typeof SchemaDeleteConclusion)[keyof typeof SchemaDeleteConclusion];
 
 export const CheckFailureReasonCode = {
-  MissingServiceUrl: 'MISSING_SERVICE_URL',
-  MissingServiceName: 'MISSING_SERVICE_NAME',
   CompositionFailure: 'COMPOSITION_FAILURE',
   BreakingChanges: 'BREAKING_CHANGES',
+  PolicyInfringement: 'POLICY_INFRINGEMENT',
 } as const;
 
 export type CheckFailureReasonCode =
   (typeof CheckFailureReasonCode)[keyof typeof CheckFailureReasonCode];
 
-export type SchemaCheckFailureReason =
-  | {
-      code: (typeof CheckFailureReasonCode)['MissingServiceName'];
-    }
-  | {
-      code: (typeof CheckFailureReasonCode)['CompositionFailure'];
-      compositionErrors: Array<{
-        message: string;
-      }>;
-    }
-  | {
-      code: (typeof CheckFailureReasonCode)['BreakingChanges'];
-      breakingChanges: Array<Change>;
-      changes: Array<Change>;
-    };
+export type CheckPolicyResultRecord = CheckPolicyResponse[number] | { message: string };
+export type SchemaCheckWarning = {
+  message: string;
+  source: string;
+  line: number;
+  column: number;
+  ruleId: string;
+  endLine: number | null;
+  endColumn: number | null;
+};
 
 export type SchemaCheckSuccess = {
   conclusion: (typeof SchemaCheckConclusion)['Success'];
-  state: {
-    changes: Array<Change> | null;
-    initial: boolean;
+  // state is null in case the check got skipped.
+  state: null | {
+    schemaChanges: Array<Change> | null;
+    schemaPolicyWarnings: SchemaCheckWarning[] | null;
+    composition: {
+      compositeSchemaSDL: string;
+      supergraphSDL: string | null;
+    };
   };
 };
 
 export type SchemaCheckFailure = {
   conclusion: (typeof SchemaCheckConclusion)['Failure'];
-  reasons: SchemaCheckFailureReason[];
+  state: {
+    // TODO: in theory if composition errors are present schema policy and schema changes would always be null
+    // we could express this with the type-system in a stricter way.
+    composition:
+      | {
+          errors: Array<SchemaCompositionError>;
+          compositeSchemaSDL: null | string;
+          supergraphSDL: null;
+        }
+      | {
+          errors: null;
+          compositeSchemaSDL: string;
+          supergraphSDL: null | string;
+        };
+    /** Absence means schema changes were skipped. */
+    schemaChanges: null | {
+      breaking: Array<Change> | null;
+      safe: Array<Change>;
+    };
+    /** Absence means the schema policy is disabled or wasn't done because composition failed. */
+    schemaPolicy: null | {
+      errors: SchemaCheckWarning[] | null;
+      warnings: SchemaCheckWarning[] | null;
+    };
+  };
 };
 
 export type SchemaCheckResult = SchemaCheckFailure | SchemaCheckSuccess;
@@ -184,21 +207,23 @@ export type SchemaDeleteFailureReason =
     }
   | {
       code: (typeof DeleteFailureReasonCode)['CompositionFailure'];
-      compositionErrors: Array<{
-        message: string;
-      }>;
+      compositionErrors: Array<SchemaCompositionError>;
     };
 
 export type SchemaDeleteSuccess = {
   conclusion: (typeof SchemaDeleteConclusion)['Accept'];
   state: {
-    composable: boolean;
     changes: Array<Change> | null;
     breakingChanges: Array<Change> | null;
-    compositionErrors: Array<{
-      message: string;
-    }> | null;
-  };
+    compositionErrors: Array<SchemaCompositionError> | null;
+    supergraph: string | null;
+  } & (
+    | {
+        composable: true;
+        fullSchemaSdl: string;
+      }
+    | { composable: false; fullSchemaSdl: null }
+  );
 };
 
 export type SchemaDeleteFailure = {
@@ -214,13 +239,77 @@ type ReasonOf<T extends { code: string }[], R extends T[number]['code']> = T ext
     : never
   : never;
 
-export function getReasonByCode<
-  T extends {
-    reasons: { code: string }[];
-  },
-  R extends T['reasons'][number]['code'],
->(failure: T, code: R): ReasonOf<T['reasons'], R> | undefined {
-  return failure.reasons.find(r => r.code === code) as any;
+export function getReasonByCode<T extends { code: string }[], R extends T[number]['code']>(
+  reasons: T,
+  code: R,
+): ReasonOf<T, R> | undefined {
+  return reasons.find(r => r.code === code) as any;
 }
 
 export const temp = 'temp';
+
+export function formatPolicyError(record: CheckPolicyResultRecord): { message: string } {
+  if ('ruleId' in record) {
+    return { message: `${record.message} (source: policy-${record.ruleId})` };
+  }
+
+  return { message: record.message };
+}
+
+export function buildSchemaCheckFailureState(args: {
+  compositionCheck: Awaited<ReturnType<RegistryChecks['composition']>>;
+  diffCheck: Awaited<ReturnType<RegistryChecks['diff']>>;
+  policyCheck: Awaited<ReturnType<RegistryChecks['policyCheck']>> | null;
+}): SchemaCheckFailure['state'] {
+  const compositionErrors: Array<CompositionFailureError> = [];
+  let schemaChanges: null | {
+    breaking: Array<Change> | null;
+    safe: Array<Change>;
+  } = null;
+  let schemaPolicy: null | {
+    errors: SchemaCheckWarning[] | null;
+    warnings: SchemaCheckWarning[] | null;
+  } = null;
+
+  if (args.compositionCheck.status === 'failed') {
+    compositionErrors.push(...args.compositionCheck.reason.errors);
+  }
+
+  if (args.diffCheck.reason) {
+    schemaChanges = {
+      breaking: args.diffCheck.reason.breakingChanges,
+      safe: args.diffCheck.reason.safeChanges,
+    };
+  }
+
+  if (args.diffCheck.result) {
+    schemaChanges = {
+      breaking: null,
+      safe: args.diffCheck.result.changes,
+    };
+  }
+
+  if (args.policyCheck) {
+    schemaPolicy = {
+      errors: args.policyCheck?.reason?.errors ?? null,
+      warnings: args.policyCheck?.reason?.warnings || args.policyCheck?.result?.warnings || null,
+    };
+  }
+
+  return {
+    schemaChanges,
+    composition:
+      compositionErrors.length || args.compositionCheck.status === 'failed'
+        ? {
+            errors: compositionErrors,
+            compositeSchemaSDL: null,
+            supergraphSDL: null,
+          }
+        : {
+            errors: null,
+            compositeSchemaSDL: args.compositionCheck.result.fullSchemaSdl,
+            supergraphSDL: args.compositionCheck.result.supergraph ?? null,
+          },
+    schemaPolicy,
+  };
+}

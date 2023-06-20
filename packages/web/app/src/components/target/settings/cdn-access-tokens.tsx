@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   DocsLink,
-  DocsNote,
   Heading,
   Input,
   Modal,
@@ -382,20 +381,20 @@ export function CDNAccessTokens(props: {
       <Heading id="cdn-access-tokens" className="mb-2">
         CDN Access Token
       </Heading>
-      <DocsNote>
+      <div className="text-sm text-gray-400">
         CDN Access Tokens are used to access to Hive High-Availability CDN and read your schema
         artifacts.
         <br />
         <DocsLink href="/management/targets#cdn-access-tokens">
-          Learn more about CDN Access Token
+          Learn more about CDN Access Tokens
         </DocsLink>
-      </DocsNote>
+      </div>
       {canManage && (
         <div className="my-3.5 flex justify-between">
           <Button
             as="a"
             href={openCreateCDNAccessTokensModalLink}
-            variant="secondary"
+            variant="primary"
             onClick={ev => {
               ev.preventDefault();
               void router.push(openCreateCDNAccessTokensModalLink);
@@ -403,7 +402,7 @@ export function CDNAccessTokens(props: {
             size="large"
             className="px-5"
           >
-            Create new CDN Token
+            Create new CDN token
           </Button>
         </div>
       )}
@@ -457,22 +456,23 @@ export function CDNAccessTokens(props: {
             Previous Page
           </Button>
         ) : null}
-        <Button
-          variant="secondary"
-          size="large"
-          className="px-5"
-          disabled={!target.data?.target?.cdnAccessTokens.pageInfo.hasNextPage}
-          onClick={() => {
-            setEndCursors(cursors => {
-              if (!target.data?.target?.cdnAccessTokens.pageInfo.endCursor) {
-                return cursors;
-              }
-              return [...cursors, target.data?.target?.cdnAccessTokens.pageInfo.endCursor];
-            });
-          }}
-        >
-          Next Page
-        </Button>
+        {target.data?.target?.cdnAccessTokens.pageInfo.hasNextPage ? (
+          <Button
+            variant="secondary"
+            size="large"
+            className="px-5"
+            onClick={() => {
+              setEndCursors(cursors => {
+                if (!target.data?.target?.cdnAccessTokens.pageInfo.endCursor) {
+                  return cursors;
+                }
+                return [...cursors, target.data?.target?.cdnAccessTokens.pageInfo.endCursor];
+              });
+            }}
+          >
+            Next Page
+          </Button>
+        ) : null}
       </div>
       {isCreateCDNAccessTokensModalOpen ? (
         <CreateCDNAccessTokenModal

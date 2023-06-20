@@ -10,6 +10,7 @@
 export type alert_channel_type = "SLACK" | "WEBHOOK";
 export type alert_type = "SCHEMA_CHANGE_NOTIFICATIONS";
 export type operation_kind = "mutation" | "query" | "subscription";
+export type schema_policy_resource = "ORGANIZATION" | "PROJECT";
 export type user_role = "ADMIN" | "MEMBER";
 
 export interface activities {
@@ -50,6 +51,28 @@ export interface cdn_access_tokens {
   last_characters: string;
   s3_key: string;
   target_id: string;
+}
+
+export interface document_collection_documents {
+  contents: string;
+  created_at: Date;
+  created_by_user_id: string | null;
+  document_collection_id: string;
+  headers: string | null;
+  id: string;
+  title: string;
+  updated_at: Date;
+  variables: string | null;
+}
+
+export interface document_collections {
+  created_at: Date;
+  created_by_user_id: string | null;
+  description: string | null;
+  id: string;
+  target_id: string;
+  title: string;
+  updated_at: Date;
 }
 
 export interface migration {
@@ -141,6 +164,25 @@ export interface projects {
   validation_url: string | null;
 }
 
+export interface schema_checks {
+  breaking_schema_changes: any | null;
+  composite_schema_sdl: string | null;
+  created_at: Date;
+  id: string;
+  is_success: boolean;
+  meta: any | null;
+  safe_schema_changes: any | null;
+  schema_composition_errors: any | null;
+  schema_policy_errors: any | null;
+  schema_policy_warnings: any | null;
+  schema_sdl: string;
+  schema_version_id: string | null;
+  service_name: string | null;
+  supergraph_sdl: string | null;
+  target_id: string;
+  updated_at: Date;
+}
+
 export interface schema_log {
   action: string;
   author: string;
@@ -153,6 +195,15 @@ export interface schema_log {
   service_name: string | null;
   service_url: string | null;
   target_id: string;
+}
+
+export interface schema_policy_config {
+  allow_overriding: boolean;
+  config: any;
+  created_at: Date;
+  resource_id: string;
+  resource_type: schema_policy_resource;
+  updated_at: Date;
 }
 
 export interface schema_version_changes {
@@ -179,6 +230,7 @@ export interface schema_versions {
   is_composable: boolean;
   previous_schema_version_id: string | null;
   schema_composition_errors: any | null;
+  supergraph_sdl: string | null;
   target_id: string;
 }
 
@@ -246,6 +298,8 @@ export interface DBTables {
   alert_channels: alert_channels;
   alerts: alerts;
   cdn_access_tokens: cdn_access_tokens;
+  document_collection_documents: document_collection_documents;
+  document_collections: document_collections;
   migration: migration;
   oidc_integrations: oidc_integrations;
   organization_invitations: organization_invitations;
@@ -254,7 +308,9 @@ export interface DBTables {
   organizations_billing: organizations_billing;
   persisted_operations: persisted_operations;
   projects: projects;
+  schema_checks: schema_checks;
   schema_log: schema_log;
+  schema_policy_config: schema_policy_config;
   schema_version_changes: schema_version_changes;
   schema_version_to_log: schema_version_to_log;
   schema_versions: schema_versions;

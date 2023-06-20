@@ -28,7 +28,10 @@ export default gql`
   }
 
   extend type Query {
-    schemaCompareToPrevious(selector: SchemaCompareToPreviousInput!): SchemaComparePayload!
+    schemaCompareToPrevious(
+      selector: SchemaCompareToPreviousInput!
+      unstable_forceLegacyComparison: Boolean = False
+    ): SchemaComparePayload!
     schemaVersions(selector: SchemaVersionsInput!, after: ID, limit: Int!): SchemaVersionConnection!
     schemaVersion(selector: SchemaVersionInput!): SchemaVersion!
     """
@@ -119,6 +122,11 @@ export default gql`
   extend type Project {
     externalSchemaComposition: ExternalSchemaComposition
     registryModel: RegistryModel!
+    schemaVersionsCount(period: DateRangeInput): Int!
+  }
+
+  extend type Target {
+    schemaVersionsCount(period: DateRangeInput): Int!
   }
 
   type EnableExternalSchemaCompositionError implements Error {
@@ -151,6 +159,14 @@ export default gql`
     latestSchemaVersion: SchemaVersion
     baseSchema: String
     hasSchema: Boolean!
+    """
+    Get a schema check for the target by ID.
+    """
+    schemaCheck(id: ID!): SchemaCheck
+    """
+    Get a list of paginated schema checks for a target.
+    """
+    schemaChecks(first: Int, after: String): SchemaCheckConnection!
   }
 
   type SchemaConnection {
@@ -270,16 +286,32 @@ export default gql`
     total: Int!
   }
 
+  type SchemaWarningConnection {
+    nodes: [SchemaCheckWarning!]!
+    total: Int!
+  }
+
   type SchemaCheckSuccess {
     valid: Boolean!
     initial: Boolean!
     changes: SchemaChangeConnection
+    warnings: SchemaWarningConnection
+    schemaCheck: SchemaCheck
+  }
+
+  type SchemaCheckWarning {
+    message: String!
+    source: String
+    line: Int
+    column: Int
   }
 
   type SchemaCheckError {
     valid: Boolean!
     changes: SchemaChangeConnection
     errors: SchemaErrorConnection!
+    warnings: SchemaWarningConnection
+    schemaCheck: SchemaCheck
   }
 
   type GitHubSchemaCheckSuccess {
@@ -321,10 +353,16 @@ export default gql`
     message: String!
   }
 
+  input SchemaCheckMetaInput {
+    author: String!
+    commit: String!
+  }
+
   input SchemaCheckInput {
     service: ID
     sdl: String!
     github: GitHubSchemaCheckInput
+    meta: SchemaCheckMetaInput
   }
 
   input SchemaDeleteInput {
@@ -362,12 +400,14 @@ export default gql`
   type SchemaCompareResult {
     changes: SchemaChangeConnection!
     diff: SchemaDiff!
+    service: ServiceSchemaDiff
     initial: Boolean!
   }
 
   enum SchemaCompareErrorDetailType {
     graphql
     composition
+    policy
   }
 
   type SchemaCompareErrorDetail {
@@ -384,7 +424,13 @@ export default gql`
 
   type SchemaDiff {
     after: String!
-    before: String!
+    before: String
+  }
+
+  type ServiceSchemaDiff {
+    name: String!
+    after: String
+    before: String
   }
 
   input SchemaVersionsInput {
@@ -441,8 +487,21 @@ export default gql`
   }
 
   type SchemaCoordinateUsage {
-    total: Int!
+    total: Float!
     isUsed: Boolean!
+    """
+    A list of clients that use this schema coordinate within GraphQL operation documents.
+    Is null if used by none clients.
+    """
+    usedByClients: [String!]
+  }
+
+  type SupergraphMetadata {
+    """
+    List of service names that own the field/type.
+    Resolves to null if the entity (field, type, scalar) does not belong to any service.
+    """
+    ownedByServiceNames: [String!]
   }
 
   union GraphQLNamedType =
@@ -459,6 +518,11 @@ export default gql`
     fields: [GraphQLField!]!
     interfaces: [String!]!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLInterfaceType {
@@ -467,6 +531,11 @@ export default gql`
     fields: [GraphQLField!]!
     interfaces: [String!]!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available.
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLUnionType {
@@ -474,11 +543,21 @@ export default gql`
     description: String
     members: [GraphQLUnionTypeMember!]!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLUnionTypeMember {
     name: String!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLEnumType {
@@ -486,6 +565,11 @@ export default gql`
     description: String
     values: [GraphQLEnumValue!]!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available.
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLInputObjectType {
@@ -493,12 +577,22 @@ export default gql`
     description: String
     fields: [GraphQLInputField!]!
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLScalarType {
     name: String!
     description: String
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLField {
@@ -509,6 +603,11 @@ export default gql`
     isDeprecated: Boolean!
     deprecationReason: String
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available.
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLInputField {
@@ -519,6 +618,11 @@ export default gql`
     isDeprecated: Boolean!
     deprecationReason: String
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available (e.g. this is not an apollo federation project).
+    """
+    supergraphMetadata: SupergraphMetadata
   }
 
   type GraphQLArgument {
@@ -537,5 +641,135 @@ export default gql`
     isDeprecated: Boolean!
     deprecationReason: String
     usage: SchemaCoordinateUsage!
+    """
+    Metadata specific to Apollo Federation Projects.
+    Is null if no meta information is available.
+    """
+    supergraphMetadata: SupergraphMetadata
+  }
+
+  type CodePosition {
+    line: Int!
+    column: Int!
+  }
+
+  type SchemaPolicyWarning {
+    message: String!
+    ruleId: String!
+    start: CodePosition!
+    end: CodePosition
+  }
+
+  type SchemaPolicyWarningEdge {
+    node: SchemaPolicyWarning!
+    cursor: String!
+  }
+
+  type SchemaPolicyWarningConnection {
+    edges: [SchemaPolicyWarningEdge!]!
+    pageInfo: PageInfo!
+  }
+
+  type SchemaCheckMeta {
+    author: String!
+    commit: String!
+  }
+
+  interface SchemaCheck {
+    id: ID!
+    createdAt: String!
+    """
+    The SDL of the schema that was checked.
+    """
+    schemaSDL: String!
+    """
+    The name of the service that owns the schema. Is null for non composite project types.
+    """
+    serviceName: String
+    """
+    Meta information about the schema check.
+    """
+    meta: SchemaCheckMeta
+    """
+    The schema version against this check was performed.
+    Is null if there is no schema version published yet.
+    """
+    schemaVersion: SchemaVersion
+  }
+
+  """
+  A successful schema check.
+  """
+  type SuccessfulSchemaCheck implements SchemaCheck {
+    id: ID!
+    createdAt: String!
+    """
+    The SDL of the schema that was checked.
+    """
+    schemaSDL: String!
+    """
+    The name of the service that owns the schema. Is null for non composite project types.
+    """
+    serviceName: String
+    """
+    Meta information about the schema check.
+    """
+    meta: SchemaCheckMeta
+    """
+    The schema version against this check was performed.
+    Is null if there is no schema version published yet.
+    """
+    schemaVersion: SchemaVersion
+
+    safeSchemaChanges: SchemaChangeConnection
+    schemaPolicyWarnings: SchemaPolicyWarningConnection
+
+    compositeSchemaSDL: String
+    supergraphSDL: String
+  }
+
+  """
+  A failed schema check.
+  """
+  type FailedSchemaCheck implements SchemaCheck {
+    id: ID!
+    createdAt: String!
+    """
+    The SDL of the schema that was checked.
+    """
+    schemaSDL: String!
+    """
+    The name of the service that owns the schema. Is null for non composite project types.
+    """
+    serviceName: String
+    """
+    Meta information about the schema check.
+    """
+    meta: SchemaCheckMeta
+    """
+    The schema version against this check was performed.
+    Is null if there is no schema version published yet.
+    """
+    schemaVersion: SchemaVersion
+
+    compositionErrors: SchemaErrorConnection
+
+    breakingSchemaChanges: SchemaChangeConnection
+    safeSchemaChanges: SchemaChangeConnection
+    schemaPolicyWarnings: SchemaPolicyWarningConnection
+    schemaPolicyErrors: SchemaPolicyWarningConnection
+
+    compositeSchemaSDL: String
+    supergraphSDL: String
+  }
+
+  type SchemaCheckEdge {
+    node: SchemaCheck!
+    cursor: String!
+  }
+
+  type SchemaCheckConnection {
+    edges: [SchemaCheckEdge!]!
+    pageInfo: PageInfo!
   }
 `;

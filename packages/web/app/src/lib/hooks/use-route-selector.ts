@@ -6,33 +6,20 @@ export type Router = ReturnType<typeof useRouteSelector>;
 export function useRouteSelector() {
   const router = useRouter();
 
-  const push = useCallback(
-    (
-      route: string,
-      as: string,
-      options?: {
-        shallow?: boolean;
-      },
-    ) => {
-      void router.push(route, as, options);
-    },
-    [router],
-  );
+  const { push } = router;
 
-  const visitHome = useCallback(() => {
-    push('/', '/');
-  }, [push]);
+  const visitHome = useCallback(() => push('/', '/'), [push]);
 
   const visitOrganization = useCallback(
     ({ organizationId }: { organizationId: string }) => {
-      push('/[orgId]', `/${organizationId}`);
+      void push('/[orgId]', `/${organizationId}`);
     },
     [push],
   );
 
   const visitProject = useCallback(
     ({ organizationId, projectId }: { organizationId: string; projectId: string }) => {
-      push('/[orgId]/[projectId]', `/${organizationId}/${projectId}`);
+      void push('/[orgId]/[projectId]', `/${organizationId}/${projectId}`);
     },
     [push],
   );
@@ -47,7 +34,7 @@ export function useRouteSelector() {
       projectId: string;
       targetId: string;
     }) => {
-      push('/[orgId]/[projectId]/[targetId]', `/${organizationId}/${projectId}/${targetId}`);
+      void push('/[orgId]/[projectId]/[targetId]', `/${organizationId}/${projectId}/${targetId}`);
     },
     [push],
   );
@@ -75,7 +62,7 @@ export function useRouteSelector() {
         router.route.replace(/\[([a-z]+)\]/gi, (_, param) => router.query[param] as string) +
         attributesPath;
 
-      push(router.route + attributesPath, route, { shallow: true });
+      return push(router.route + attributesPath, route, { shallow: true });
     },
     [router, push],
   );
@@ -97,6 +84,7 @@ export function useRouteSelector() {
       projectId: router.query.projectId as string,
       visitProject,
       targetId: router.query.targetId as string,
+      schemaCheckId: (router.query.schemaCheckId ?? null) as string | null,
       visitTarget,
       operationHash: router.query.hash as string,
       versionId: router.query.versionId as string,

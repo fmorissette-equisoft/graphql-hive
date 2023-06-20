@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   FastifyLoggerInstance,
   FastifyReply,
@@ -8,12 +9,13 @@ import { GraphQLError, print, ValidationContext, ValidationRule } from 'graphql'
 import { createYoga, Plugin, useErrorHandler } from 'graphql-yoga';
 import hyperid from 'hyperid';
 import zod from 'zod';
+import { isGraphQLError } from '@envelop/core';
 import { useGenericAuth } from '@envelop/generic-auth';
 import { useGraphQLModules } from '@envelop/graphql-modules';
 import { useSentry } from '@envelop/sentry';
-import { useHive } from '@graphql-hive/client';
-import { Registry, RegistryContext } from '@hive/api';
-import { HiveError } from '@hive/api';
+import { useYogaHive } from '@graphql-hive/client';
+import { useResponseCache } from '@graphql-yoga/plugin-response-cache';
+import { HiveError, Registry, RegistryContext } from '@hive/api';
 import { cleanRequestId } from '@hive/service-common';
 import { runWithAsyncContext } from '@sentry/node';
 import { fetch } from '@whatwg-node/fetch';
@@ -23,6 +25,10 @@ import { useArmor } from './use-armor';
 import { extractUserId, useSentryUser } from './use-sentry-user';
 
 const reqIdGenerate = hyperid({ fixedLength: true });
+
+function hashSessionId(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex');
+}
 
 const SuperTokenAccessTokenModel = zod.object({
   version: zod.literal('1'),
@@ -146,10 +152,11 @@ export const graphqlHandler = (options: GraphQLHandlerOptions): RouteHandlerMeth
       useSentryUser(),
       useErrorHandler(({ errors, context }): void => {
         for (const error of errors) {
-          // // Only log unexpected errors.
-          // if (isGraphQLError(error)) {
-          //   continue;
-          // }
+          if (isGraphQLError(error) && error.originalError) {
+            console.log(error);
+            console.log(error.originalError);
+            continue;
+          }
 
           if (hasFastifyRequest(context)) {
             context.req.log.error(error);
@@ -170,7 +177,7 @@ export const graphqlHandler = (options: GraphQLHandlerOptions): RouteHandlerMeth
             if (authHeaderParts.length === 2 && authHeaderParts[0] === 'Bearer') {
               const accessToken = authHeaderParts[1];
               // The token issued by Hive is always 32 characters long.
-              // Everything longer should be treated as an supertokens token (JWT).
+              // Everything longer should be treated as a supertokens token (JWT).
               if (accessToken.length > 32) {
                 return await verifySuperTokensSession(
                   options.supertokens.connectionUri,
@@ -184,7 +191,7 @@ export const graphqlHandler = (options: GraphQLHandlerOptions): RouteHandlerMeth
           return null;
         },
       }),
-      useHive({
+      useYogaHive({
         debug: true,
         enabled: !!options.hiveConfig,
         token: options.hiveConfig?.token ?? '',
@@ -207,6 +214,23 @@ export const graphqlHandler = (options: GraphQLHandlerOptions): RouteHandlerMeth
           author: 'Hive API',
           commit: options.release,
         },
+      }),
+      useResponseCache({
+        session: request => {
+          const sessionValue =
+            request.headers.get('authorization') ?? request.headers.get('x-api-token');
+
+          if (sessionValue != null) {
+            return hashSessionId(sessionValue);
+          }
+
+          return null;
+        },
+        ttl: 0,
+        ttlPerSchemaCoordinate: {
+          'Query.tokenInfo': 5_000 /* 5 seconds */,
+        },
+        invalidateViaMutation: false,
       }),
       useGraphQLModules(options.registry),
       useNoIntrospection({

@@ -13,18 +13,14 @@ import type {
 } from './../../../../shared/entities';
 import { ProjectType } from './../../../../shared/entities';
 import {
-  CheckFailureReasonCode,
+  buildSchemaCheckFailureState,
   DeleteFailureReasonCode,
   PublishFailureReasonCode,
-  PublishIgnoreReasonCode,
-  /* Check */
+  PublishIgnoreReasonCode /* Check */,
   SchemaCheckConclusion,
-  SchemaCheckFailureReason,
-  SchemaCheckResult,
-  /* Delete */
+  SchemaCheckResult /* Delete */,
   SchemaDeleteConclusion,
-  SchemaDeleteResult,
-  /* Publish */
+  SchemaDeleteResult /* Publish */,
   SchemaPublishConclusion,
   SchemaPublishFailureReason,
   SchemaPublishResult,
@@ -56,7 +52,7 @@ export class CompositeModel {
   }: {
     input: {
       sdl: string;
-      serviceName?: string | null;
+      serviceName: string;
     };
     selector: {
       organization: string;
@@ -83,7 +79,7 @@ export class CompositeModel {
       target: selector.target,
       date: Date.now() as any,
       sdl: input.sdl,
-      service_name: input.serviceName!,
+      service_name: input.serviceName,
       service_url: temp,
       action: 'PUSH',
       metadata: null,
@@ -93,23 +89,7 @@ export class CompositeModel {
     const schemas = latestVersion
       ? swapServices(latestVersion.schemas, incoming).schemas
       : [incoming];
-    const initial = latest === null;
     const compareToLatest = organization.featureFlags.compareToPreviousComposableVersion === false;
-
-    const serviceNameCheck = await this.checks.serviceName({
-      name: incoming.service_name,
-    });
-
-    if (serviceNameCheck.status === 'failed') {
-      return {
-        conclusion: SchemaCheckConclusion.Failure,
-        reasons: [
-          {
-            code: CheckFailureReasonCode.MissingServiceName,
-          },
-        ],
-      };
-    }
 
     const checksumCheck = await this.checks.checksum({
       schemas,
@@ -120,10 +100,7 @@ export class CompositeModel {
     if (checksumCheck.status === 'completed' && checksumCheck.result === 'unchanged') {
       return {
         conclusion: SchemaCheckConclusion.Success,
-        state: {
-          initial,
-          changes: null,
-        },
+        state: null,
       };
     }
 
@@ -132,7 +109,7 @@ export class CompositeModel {
         ? this.federationOrchestrator
         : this.stitchingOrchestrator;
 
-    const [compositionCheck, diffCheck] = await Promise.all([
+    const [compositionCheck, diffCheck, policyCheck] = await Promise.all([
       this.checks.composition({
         orchestrator,
         project,
@@ -147,46 +124,40 @@ export class CompositeModel {
         version: compareToLatest ? latest : latestComposable,
         includeUrlChanges: false,
       }),
+      this.checks.policyCheck({
+        orchestrator,
+        project,
+        selector,
+        schemas,
+        modifiedSdl: incoming.sdl,
+        baseSchema,
+      }),
     ]);
 
-    if (compositionCheck.status === 'failed' || diffCheck.status === 'failed') {
-      const reasons: SchemaCheckFailureReason[] = [];
-
-      if (compositionCheck.status === 'failed') {
-        reasons.push({
-          code: CheckFailureReasonCode.CompositionFailure,
-          compositionErrors: compositionCheck.reason.errors,
-        });
-      }
-
-      if (diffCheck.status === 'failed') {
-        if (diffCheck.reason.changes) {
-          reasons.push({
-            code: CheckFailureReasonCode.BreakingChanges,
-            changes: diffCheck.reason.changes ?? [],
-            breakingChanges: diffCheck.reason.breakingChanges,
-          });
-        }
-
-        if (diffCheck.reason.compareFailure) {
-          reasons.push({
-            code: CheckFailureReasonCode.CompositionFailure,
-            compositionErrors: [diffCheck.reason.compareFailure],
-          });
-        }
-      }
-
+    if (
+      compositionCheck.status === 'failed' ||
+      diffCheck.status === 'failed' ||
+      policyCheck.status === 'failed'
+    ) {
       return {
         conclusion: SchemaCheckConclusion.Failure,
-        reasons,
+        state: buildSchemaCheckFailureState({
+          compositionCheck,
+          diffCheck,
+          policyCheck,
+        }),
       };
     }
 
     return {
       conclusion: SchemaCheckConclusion.Success,
       state: {
-        initial,
-        changes: diffCheck.result?.changes ?? null,
+        schemaPolicyWarnings: policyCheck.result?.warnings ?? null,
+        schemaChanges: diffCheck.result?.changes ?? null,
+        composition: {
+          compositeSchemaSDL: compositionCheck.result.fullSchemaSdl,
+          supergraphSDL: compositionCheck.result.supergraph,
+        },
       },
     };
   }
@@ -481,13 +452,41 @@ export class CompositeModel {
             breakingChanges: [],
           };
 
+    let composablePartial:
+      | {
+          composable: true;
+          fullSchemaSdl: string;
+        }
+      | {
+          composable: false;
+          fullSchemaSdl: null;
+        } = {
+      composable: false,
+      fullSchemaSdl: null,
+    };
+
+    const isComposable = compositionCheck.status === 'completed';
+    const fullSchemaSdl = compositionCheck.result?.fullSchemaSdl ?? null;
+
+    if (compositionCheck.status === 'completed' && isComposable && fullSchemaSdl == null) {
+      throw new Error(
+        'Full schema SDL is null when composition check is completed and is composable.',
+      );
+    } else if (isComposable && fullSchemaSdl) {
+      composablePartial = {
+        composable: isComposable,
+        fullSchemaSdl,
+      };
+    }
+
     return {
       conclusion: SchemaDeleteConclusion.Accept,
       state: {
-        composable: compositionCheck.status === 'completed',
+        ...composablePartial,
         changes,
         breakingChanges,
         compositionErrors: compositionCheck.reason?.errors ?? [],
+        supergraph: compositionCheck.result?.supergraph ?? null,
       },
     };
   }

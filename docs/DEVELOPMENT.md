@@ -16,7 +16,6 @@ Developing Hive locally requires you to have the following software installed lo
 - Create `.env` file in the root, and use the following:
 
 ```dotenv
-SERVER_ENDPOINT=http://localhost:3001
 ENVIRONMENT=local
 ```
 
@@ -48,6 +47,8 @@ We have a script to feed your local instance of Hive.
 
 > Note: You can set `STAGING=1` in order to target staging env and seed a target there. Same for
 > development env, you can use `DEV=1`
+
+> Note: You can set `FEDERATION=1` in order to publish multiple subgraphs.
 
 > To send more operations and test heavy load on Hive instance, you can also set `OPERATIONS`
 > (amount of operations in each interval round, default is `1`) and `INTERVAL` (frequency of sending

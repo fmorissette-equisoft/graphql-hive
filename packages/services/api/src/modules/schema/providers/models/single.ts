@@ -5,14 +5,11 @@ import type { PublishInput } from '../schema-publisher';
 import type { Organization, Project, SingleSchema, Target } from './../../../../shared/entities';
 import { Logger } from './../../../shared/providers/logger';
 import {
-  CheckFailureReasonCode,
+  buildSchemaCheckFailureState,
   PublishFailureReasonCode,
-  PublishIgnoreReasonCode,
-  /* Check */
+  PublishIgnoreReasonCode /* Check */,
   SchemaCheckConclusion,
-  SchemaCheckFailureReason,
-  SchemaCheckResult,
-  /* Publish */
+  SchemaCheckResult /* Publish */,
   SchemaPublishConclusion,
   SchemaPublishResult,
   temp,
@@ -68,7 +65,6 @@ export class SingleModel {
       metadata: null,
     };
 
-    const initial = latest === null;
     const latestVersion = latest;
     const schemas = [incoming] as [SingleSchema];
     const compareToLatest = organization.featureFlags.compareToPreviousComposableVersion === false;
@@ -83,14 +79,11 @@ export class SingleModel {
       this.logger.debug('No changes detected, skipping schema check');
       return {
         conclusion: SchemaCheckConclusion.Success,
-        state: {
-          changes: null,
-          initial,
-        },
+        state: null,
       };
     }
 
-    const [compositionCheck, diffCheck] = await Promise.all([
+    const [compositionCheck, diffCheck, policyCheck] = await Promise.all([
       this.checks.composition({
         orchestrator: this.orchestrator,
         project,
@@ -105,48 +98,40 @@ export class SingleModel {
         version: compareToLatest ? latest : latestComposable,
         includeUrlChanges: false,
       }),
+      this.checks.policyCheck({
+        orchestrator: this.orchestrator,
+        project,
+        selector,
+        schemas,
+        modifiedSdl: input.sdl,
+        baseSchema,
+      }),
     ]);
 
-    if (compositionCheck.status === 'failed' || diffCheck.status === 'failed') {
-      const reasons: SchemaCheckFailureReason[] = [];
-
-      if (compositionCheck.status === 'failed') {
-        this.logger.debug('Failing schema check due to composition errors');
-        reasons.push({
-          code: CheckFailureReasonCode.CompositionFailure,
-          compositionErrors: compositionCheck.reason.errors,
-        });
-      }
-
-      if (diffCheck.status === 'failed') {
-        this.logger.debug('Failing schema check due to breaking changes');
-        if (diffCheck.reason.changes) {
-          reasons.push({
-            code: CheckFailureReasonCode.BreakingChanges,
-            changes: diffCheck.reason.changes ?? [],
-            breakingChanges: diffCheck.reason.breakingChanges,
-          });
-        }
-
-        if (diffCheck.reason.compareFailure) {
-          reasons.push({
-            code: CheckFailureReasonCode.CompositionFailure,
-            compositionErrors: [diffCheck.reason.compareFailure],
-          });
-        }
-      }
-
+    if (
+      compositionCheck.status === 'failed' ||
+      diffCheck.status === 'failed' ||
+      policyCheck.status === 'failed'
+    ) {
       return {
         conclusion: SchemaCheckConclusion.Failure,
-        reasons,
+        state: buildSchemaCheckFailureState({
+          compositionCheck,
+          diffCheck,
+          policyCheck,
+        }),
       };
     }
 
     return {
       conclusion: SchemaCheckConclusion.Success,
       state: {
-        changes: diffCheck.result?.changes ?? null,
-        initial,
+        schemaChanges: diffCheck.result?.changes ?? null,
+        schemaPolicyWarnings: policyCheck.result?.warnings ?? [],
+        composition: {
+          compositeSchemaSDL: compositionCheck.result.fullSchemaSdl,
+          supergraphSDL: compositionCheck.result.supergraph,
+        },
       },
     };
   }
